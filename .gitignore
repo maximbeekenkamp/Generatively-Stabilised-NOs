@@ -4,4 +4,7 @@ __pycache__/
 *$py.class
 
 # Data
-project/data/*
+data_generation/burgers_1d/save/*
+data_generation/navier_stokes_2d/save/*
+
+PDEBENCH_SETUP_SUMMARY.md

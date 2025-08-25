@@ -1,0 +1,15 @@
+multi:
+  save: save/burgers/
+  dt_save: 0.01
+  ini_time: 0.0
+  fin_time: 2.0
+  nx: 1024
+  xL: 0.0
+  xR: 1.0
+  epsilon: 0.1
+  CFL: 0.25
+  if_second_order: 1.0
+  numbers: 10000
+  show_steps: 100
+  init_key: 2022
+  if_rand_param: false
