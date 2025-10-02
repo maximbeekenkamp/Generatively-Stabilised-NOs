@@ -2,9 +2,42 @@
 __pycache__/
 *.py[codz]
 *$py.class
+*.pyc
+*.pyo
 
-# Data
-data_generation/burgers_1d/save/*
+# OS-specific files
+.DS_Store
+
+# Large Data Files (download separately)
+data/128_inc/
+data/128_tra/
+data/128_iso/
+data/256_inc/
+data/256_tra/
+data_generation/burgers_1d/save/burgers/*
 data_generation/navier_stokes_2d/save/*
 
-PDEBENCH_SETUP_SUMMARY.md
+# Documentation 
+docs/*
+
+# Test outputs (keep structure, ignore generated files)
+tests/outputs/**/*.png
+tests/outputs/**/*.npz
+tests/outputs/**/*.txt
+!tests/outputs/.gitkeep
+
+# Model checkpoints
+models/**/*.pt
+models/**/*.pth
+!models/.gitkeep
+
+# Logs
+runs/
+*.log
+tensorboard_logs/
+
+# Environment
+.env
+.venv/
+venv/
+ENV/

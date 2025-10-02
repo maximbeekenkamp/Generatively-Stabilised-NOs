@@ -1,0 +1,46 @@
+{
+    "experiment_name": "GenOp-FNO-Diffusion-Iso",
+    "description": "Turbulence-aware FNO + Diffusion generative operator for isotropic turbulence",
+
+    "model_type": "genop-fno-diffusion",
+    "correction_strength": 0.8,
+
+    "data_dir": "./data/iso",
+    "batch_size": 8,
+    "input_length": 12,
+    "output_length": 12,
+    "height": 64,
+    "width": 64,
+    "channels": 3,
+    "num_workers": 6,
+    "use_augmentation": true,
+    "reynolds_number": 10000,
+    "turbulence_intensity": 0.1,
+    "enable_multiscale_filtering": true,
+
+    "stage1_epochs": 80,
+    "stage2_epochs": 40,
+    "stage1_lr": 0.002,
+    "stage2_lr": 0.001,
+    "enable_joint_finetuning": true,
+    "joint_finetuning_epochs": 15,
+
+    "optimizer_type": "adam",
+    "weight_decay": 0.00005,
+    "scheduler_type": "cosine",
+
+    "use_l1_loss": true,
+    "use_perceptual_loss": true,
+    "energy_spectrum_loss_weight": 0.2,
+
+    "device": "auto",
+    "enable_gradient_checkpointing": true,
+    "use_mixed_precision": true,
+
+    "checkpoint_dir": "./checkpoints/iso/genop_fno_diffusion",
+    "checkpoint_frequency": 10,
+    "log_dir": "./logs/iso/genop_fno_diffusion",
+    "log_level": "INFO",
+
+    "early_stopping_patience": 30
+}

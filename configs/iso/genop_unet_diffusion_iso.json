@@ -1,0 +1,46 @@
+{
+    "experiment_name": "GenOp-UNet-Diffusion-Iso",
+    "description": "Turbulence-aware U-Net + Diffusion generative operator for isotropic turbulence",
+
+    "model_type": "genop-unet-diffusion",
+    "correction_strength": 0.9,
+
+    "data_dir": "./data/iso",
+    "batch_size": 12,
+    "input_length": 12,
+    "output_length": 12,
+    "height": 64,
+    "width": 64,
+    "channels": 3,
+    "num_workers": 6,
+    "use_augmentation": true,
+    "reynolds_number": 8000,
+    "turbulence_intensity": 0.08,
+    "enable_multiscale_filtering": false,
+
+    "stage1_epochs": 100,
+    "stage2_epochs": 50,
+    "stage1_lr": 0.003,
+    "stage2_lr": 0.0015,
+    "enable_joint_finetuning": false,
+    "joint_finetuning_epochs": 0,
+
+    "optimizer_type": "adam",
+    "weight_decay": 0.0001,
+    "scheduler_type": "step",
+
+    "use_l1_loss": false,
+    "use_perceptual_loss": true,
+    "energy_spectrum_loss_weight": 0.15,
+
+    "device": "auto",
+    "enable_gradient_checkpointing": false,
+    "use_mixed_precision": true,
+
+    "checkpoint_dir": "./checkpoints/iso/genop_unet_diffusion",
+    "checkpoint_frequency": 12,
+    "log_dir": "./logs/iso/genop_unet_diffusion",
+    "log_level": "INFO",
+
+    "early_stopping_patience": 35
+}

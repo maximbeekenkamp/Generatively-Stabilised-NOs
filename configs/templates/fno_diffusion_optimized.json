@@ -1,0 +1,95 @@
+{
+    "_description": "Optimized template for FNO + Diffusion generative operators",
+    "_characteristics": "High-frequency resolution, spectral domain processing, efficient for periodic boundary conditions",
+
+    "model_type": "genop-fno-diffusion",
+    "correction_strength": 1.0,
+
+    "_fno_specific_settings": {
+        "batch_size_recommendations": {
+            "inc_64x64": 8,
+            "inc_128x128": 4,
+            "tra_128x128": 2,
+            "iso_64x64": 12
+        },
+        "sequence_length_recommendations": {
+            "inc": 10,
+            "tra": 8,
+            "iso": 12
+        }
+    },
+
+    "training_schedule": {
+        "stage1_epochs": 120,
+        "stage2_epochs": 60,
+        "stage1_lr": 0.001,
+        "stage2_lr": 0.0005,
+        "enable_joint_finetuning": true,
+        "joint_finetuning_epochs": 25
+    },
+
+    "optimization": {
+        "optimizer_type": "adamw",
+        "weight_decay": 0.0001,
+        "scheduler_type": "cosine",
+        "clip_grad_norm": 1.0
+    },
+
+    "loss_configuration": {
+        "use_l1_loss": true,
+        "l1_loss_weight": 0.1,
+        "use_perceptual_loss": false,
+        "perceptual_loss_weight": 0.1
+    },
+
+    "memory_optimization": {
+        "enable_gradient_checkpointing": true,
+        "use_mixed_precision": true,
+        "adaptive_batch_sizing": true
+    },
+
+    "augmentation_strategy": {
+        "inc": "standard",
+        "tra": "conservative",
+        "iso": "aggressive"
+    },
+
+    "dataset_specific_overrides": {
+        "inc": {
+            "channels": 3,
+            "physics_loss_weight": 0.1,
+            "use_augmentation": true
+        },
+        "tra": {
+            "channels": 4,
+            "shock_loss_weight": 0.3,
+            "use_augmentation": false,
+            "correction_strength": 1.2
+        },
+        "iso": {
+            "channels": 3,
+            "energy_spectrum_loss_weight": 0.2,
+            "use_augmentation": true,
+            "correction_strength": 0.8
+        }
+    },
+
+    "hardware_settings": {
+        "device": "auto",
+        "num_workers": 4,
+        "prefetch_factor": 2,
+        "pin_memory": true
+    },
+
+    "checkpointing": {
+        "checkpoint_frequency": 10,
+        "save_best_only": true,
+        "early_stopping_patience": 50
+    },
+
+    "logging": {
+        "log_level": "INFO",
+        "log_frequency": 10,
+        "tensorboard_enabled": true
+    }
+}

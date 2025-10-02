@@ -1,0 +1,44 @@
+{
+    "experiment_name": "GenOp-FNO-Diffusion-Tra",
+    "description": "Shock-aware FNO + Diffusion generative operator for transonic flows",
+
+    "model_type": "genop-fno-diffusion",
+    "correction_strength": 1.2,
+
+    "data_dir": "./data/tra",
+    "batch_size": 2,
+    "input_length": 8,
+    "output_length": 8,
+    "height": 128,
+    "width": 128,
+    "channels": 4,
+    "num_workers": 4,
+    "use_augmentation": false,
+    "shock_detection_threshold": 0.1,
+
+    "stage1_epochs": 150,
+    "stage2_epochs": 80,
+    "stage1_lr": 0.0005,
+    "stage2_lr": 0.0002,
+    "enable_joint_finetuning": true,
+    "joint_finetuning_epochs": 30,
+
+    "optimizer_type": "adamw",
+    "weight_decay": 0.001,
+    "scheduler_type": "cosine",
+
+    "use_l1_loss": true,
+    "use_perceptual_loss": false,
+    "shock_loss_weight": 0.3,
+
+    "device": "auto",
+    "enable_gradient_checkpointing": true,
+    "use_mixed_precision": true,
+
+    "checkpoint_dir": "./checkpoints/tra/genop_fno_diffusion",
+    "checkpoint_frequency": 5,
+    "log_dir": "./logs/tra/genop_fno_diffusion",
+    "log_level": "INFO",
+
+    "early_stopping_patience": 80
+}

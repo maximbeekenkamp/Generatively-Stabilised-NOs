@@ -1,0 +1,79 @@
+# Incompressible Wake Flow Training Configuration
+# This replaces hardcoded parameters from training_inc.py
+
+dataset:
+  name: "inc"
+  type: "incompressible_wake_flow"
+  description: "Incompressible wake flow trajectories simulated with PhiFlow at Reynolds numbers 100-1000"
+
+model:
+  name: "2D_Inc/128_unet-m2"
+  architecture: "unet"
+  pretrained: false
+  training_noise: 0.0
+
+data_params:
+  batch_size: 64
+  augmentations: ["normalize"]
+  sequence_length: [2, 2]
+  random_sequence_offset: true
+  data_size: [128, 64]
+  dimension: 2
+  sim_fields: ["pres"]
+  sim_params: ["rey"]
+  normalize_mode: "incMixed"
+
+training_params:
+  epochs: 1000
+  learning_rate: 0.0001
+  weight_decay: 0.0
+  exp_lr_gamma: 1.0
+  test_interval: 10
+  save_interval: 100
+
+loss_params:
+  reconstruction_mse: 0.0
+  prediction_mse: 1.0
+  reconstruction_lsim: 0.0
+  prediction_lsim: 0.0
+
+# Dataset filtering configuration
+data_filters:
+  filter_top: ["128_inc"]
+  filter_sim: [[10, 81]]  # Training simulations
+  exclude_filter_sim: true
+  filter_frame: [[800, 1300]]
+
+# Test set configurations
+test_sets:
+  low_reynolds:
+    name: "Test Low Reynolds 100-200"
+    filter_sim: [[82, 84, 86, 88, 90]]
+    filter_frame: [[1000, 1150]]
+    sequence_length: [[60, 2]]
+
+  high_reynolds:
+    name: "Test High Reynolds 900-1000"
+    filter_sim: [[0, 2, 4, 6, 8]]
+    filter_frame: [[1000, 1150]]
+    sequence_length: [[60, 2]]
+
+  variable_reynolds:
+    name: "Test Varying Reynolds Number (200-900)"
+    filter_top: ["128_reyVar"]
+    filter_sim: [[0]]
+    filter_frame: [[300, 800]]
+    sequence_length: [[250, 2]]
+
+# Training variants
+variants:
+  unrolled:
+    description: "Unrolled training for improved stability"
+    sequence_length: [8, 2]
+    batch_size: 16
+    model_suffix: "-m8"
+
+  noise_training:
+    description: "Training with added noise"
+    training_noise: 0.01
+    model_suffix: "-noise0.01"

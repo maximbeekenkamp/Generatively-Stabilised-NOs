@@ -1,0 +1,52 @@
+{
+    "_description": "Base configuration template for generative operator training",
+    "_usage": "Extend this template for specific model-dataset combinations",
+
+    "experiment_name": "TEMPLATE_EXPERIMENT",
+    "description": "Template configuration for NO+DM training",
+
+    "model_type": "TEMPLATE_MODEL_TYPE",
+    "correction_strength": 1.0,
+
+    "data_dir": "./data/TEMPLATE_DATASET",
+    "batch_size": 4,
+    "input_length": 10,
+    "output_length": 10,
+    "height": 64,
+    "width": 64,
+    "channels": 3,
+    "num_workers": 4,
+    "use_augmentation": true,
+
+    "stage1_epochs": 100,
+    "stage2_epochs": 50,
+    "stage1_lr": 0.001,
+    "stage2_lr": 0.0005,
+    "enable_joint_finetuning": true,
+    "joint_finetuning_epochs": 20,
+
+    "optimizer_type": "adamw",
+    "weight_decay": 0.0001,
+    "scheduler_type": "cosine",
+
+    "use_l1_loss": true,
+    "use_perceptual_loss": false,
+
+    "device": "auto",
+    "enable_gradient_checkpointing": true,
+    "use_mixed_precision": true,
+
+    "checkpoint_dir": "./checkpoints/TEMPLATE_DATASET/TEMPLATE_MODEL",
+    "checkpoint_frequency": 10,
+    "log_dir": "./logs/TEMPLATE_DATASET/TEMPLATE_MODEL",
+    "log_level": "INFO",
+
+    "early_stopping_patience": 50,
+
+    "_template_variables": {
+        "TEMPLATE_EXPERIMENT": "Name of the experiment",
+        "TEMPLATE_MODEL_TYPE": "genop-fno-diffusion, genop-tno-diffusion, or genop-unet-diffusion",
+        "TEMPLATE_DATASET": "inc, tra, or iso",
+        "TEMPLATE_MODEL": "fno_diffusion, tno_diffusion, or unet_diffusion"
+    }
+}

@@ -1,0 +1,148 @@
+analysis:
+  alpha: 0.05
+  cache_results: true
+  correction_method: bonferroni
+  enable_gpu: true
+  n_bootstrap: 5000
+  n_monte_carlo: 100
+  random_state: 42
+  timeout_seconds: 3600
+dataset_config:
+  preprocessing:
+    normalize_inputs: true
+    outlier_method: iqr
+    remove_outliers: true
+    standardize_outputs: true
+  supported_datasets:
+  - incompressible_flow
+  - transonic_flow
+  - isotropic_turbulence
+  - shallow_water
+  - wave_equation
+experimental:
+  advanced_statistics: false
+  advanced_uncertainty: false
+  advanced_visualization: false
+  enabled: false
+gpu:
+  allow_growth: true
+  device: auto
+  enabled: true
+  memory_fraction: 0.8
+integration:
+  database:
+    connection_string: sqlite:///genop_results.db
+    enabled: false
+    type: sqlite
+  mlflow:
+    enabled: false
+    tracking_uri: ./mlruns
+  tensorboard:
+    enabled: true
+    log_dir: /Users/maximbeekenkamp/Desktop/Research/GenStabilisation-Proj/Generatively-Stabilised-NOs/tensorboard_logs
+  wandb:
+    enabled: false
+    project_name: genop-analysis
+io:
+  cache_dir: /Users/maximbeekenkamp/Desktop/Research/GenStabilisation-Proj/Generatively-Stabilised-NOs/cache
+  compression: gzip
+  data_format: pickle
+  output_dir: /Users/maximbeekenkamp/Desktop/Research/GenStabilisation-Proj/Generatively-Stabilised-NOs/results
+  temp_dir: /Users/maximbeekenkamp/Desktop/Research/GenStabilisation-Proj/Generatively-Stabilised-NOs/temp
+logging:
+  backup_count: 5
+  console: true
+  file: /Users/maximbeekenkamp/Desktop/Research/GenStabilisation-Proj/Generatively-Stabilised-NOs/logs/genop_analysis.log
+  format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+  level: INFO
+  max_file_size: 10MB
+metrics:
+  dual_evaluation: true
+  physics_aware: true
+  physics_metrics:
+    incompressible_flow:
+    - divergence_error
+    - mass_conservation
+    - kinetic_energy_spectrum
+    isotropic_turbulence:
+    - energy_spectrum_slope
+    - kolmogorov_scaling
+    - dissipation_rate
+    transonic_flow:
+    - shock_preservation
+    - entropy_violation
+    - total_variation
+  standard_metrics:
+  - mse
+  - mae
+  - r2_score
+  - correlation
+  - max_error
+  - median_absolute_error
+  statistical_testing: true
+  uncertainty_quantification: true
+model_config:
+  default_models:
+  - genop-fno
+  - genop-tno
+  - genop-unet
+  - baseline
+  evaluation:
+    max_rollout_steps: 50
+    prefer_corrected: true
+    rollout_analysis: true
+performance:
+  batch_size: 1000
+  cache_size: 1GB
+  memory_limit: 8GB
+  memory_monitoring: true
+  parallel_workers: auto
+  show_progress: true
+reporting:
+  auto_timestamp: true
+  format: markdown
+  include_executive_summary: true
+  include_technical_details: true
+  include_visualizations: true
+  sections:
+  - summary
+  - methodology
+  - results
+  - statistical_analysis
+  - uncertainty_analysis
+  - recommendations
+  - appendix
+  theme: default
+statistical_testing:
+  default_test_type: wilcoxon
+  effect_size_confidence: 0.95
+  effect_size_method: cohen_d
+  min_effect_size: 0.2
+  power_analysis: true
+uncertainty:
+  bootstrap:
+    confidence_level: 0.95
+    n_samples: 1000
+  calibration:
+    bin_strategy: uniform
+    n_bins: 10
+  ensemble:
+    method: variance
+  mc_dropout:
+    dropout_rate: 0.1
+    n_samples: 100
+validation:
+  auto_fix: true
+  input_validation: true
+  output_validation: true
+  strictness: moderate
+visualization:
+  color_palette: default
+  figure_dpi: 300
+  figure_format: png
+  figure_size:
+  - 10
+  - 8
+  interactive_plots: true
+  plot_style: default
+  save_figures: true

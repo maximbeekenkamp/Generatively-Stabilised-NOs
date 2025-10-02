@@ -1,0 +1,42 @@
+{
+    "experiment_name": "GenOp-FNO-Diffusion-Inc",
+    "description": "FNO + Diffusion generative operator for incompressible flows",
+
+    "model_type": "genop-fno-diffusion",
+    "correction_strength": 1.0,
+
+    "data_dir": "./data/inc",
+    "batch_size": 4,
+    "input_length": 10,
+    "output_length": 10,
+    "height": 64,
+    "width": 64,
+    "channels": 3,
+    "num_workers": 4,
+    "use_augmentation": false,
+
+    "stage1_epochs": 100,
+    "stage2_epochs": 50,
+    "stage1_lr": 0.001,
+    "stage2_lr": 0.0005,
+    "enable_joint_finetuning": true,
+    "joint_finetuning_epochs": 20,
+
+    "optimizer_type": "adamw",
+    "weight_decay": 0.0001,
+    "scheduler_type": "cosine",
+
+    "use_l1_loss": true,
+    "use_perceptual_loss": false,
+
+    "device": "auto",
+    "enable_gradient_checkpointing": true,
+    "use_mixed_precision": true,
+
+    "checkpoint_dir": "./checkpoints/inc/genop_fno_diffusion",
+    "checkpoint_frequency": 10,
+    "log_dir": "./logs/inc/genop_fno_diffusion",
+    "log_level": "INFO",
+
+    "early_stopping_patience": 50
+}

@@ -1,0 +1,66 @@
+# Isotropic Turbulence Training Configuration
+# This replaces hardcoded parameters from training_iso.py
+
+dataset:
+  name: "iso"
+  type: "isotropic_turbulence"
+  description: "Two-dimensional sequences sliced from three-dimensional, isotropic turbulence simulations"
+
+model:
+  name: "2D_Iso/128_unet-m2"
+  architecture: "unet"
+  pretrained: false
+  training_noise: 0.0
+
+data_params:
+  batch_size: 64
+  augmentations: ["normalize"]
+  sequence_length: [2, 1]
+  random_sequence_offset: true
+  data_size: [128, 64]
+  dimension: 2
+  sim_fields: ["velZ", "pres"]
+  sim_params: []
+  normalize_mode: "isoSingle"
+
+training_params:
+  epochs: 100
+  learning_rate: 0.0001
+  weight_decay: 0.0
+  exp_lr_gamma: 1.0
+  test_interval: 10
+  save_interval: 50
+
+loss_params:
+  reconstruction_mse: 0.0
+  prediction_mse: 1.0
+  reconstruction_lsim: 0.0
+  prediction_lsim: 0.0
+
+# Dataset filtering configuration
+data_filters:
+  filter_top: ["128_iso"]
+  filter_sim: [[200, 351]]  # Training simulations
+  exclude_filter_sim: true
+  filter_frame: [[0, 1000]]
+
+# Test set configurations
+test_sets:
+  isotropic_test:
+    name: "Test Isotropic Turbulence"
+    filter_sim: [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]]
+    filter_frame: [[400, 500]]
+    sequence_length: [[60, 1]]
+
+# Training variants
+variants:
+  unrolled:
+    description: "Unrolled training for improved stability"
+    sequence_length: [8, 1]
+    batch_size: 16
+    model_suffix: "-m8"
+
+  noise_training:
+    description: "Training with added noise"
+    training_noise: 0.01
+    model_suffix: "-noise0.01"

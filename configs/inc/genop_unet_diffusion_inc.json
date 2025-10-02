@@ -1,0 +1,42 @@
+{
+    "experiment_name": "GenOp-UNet-Diffusion-Inc",
+    "description": "U-Net + Diffusion generative operator for incompressible flows",
+
+    "model_type": "genop-unet-diffusion",
+    "correction_strength": 0.8,
+
+    "data_dir": "./data/inc",
+    "batch_size": 6,
+    "input_length": 10,
+    "output_length": 10,
+    "height": 64,
+    "width": 64,
+    "channels": 3,
+    "num_workers": 4,
+    "use_augmentation": true,
+
+    "stage1_epochs": 120,
+    "stage2_epochs": 60,
+    "stage1_lr": 0.002,
+    "stage2_lr": 0.001,
+    "enable_joint_finetuning": false,
+    "joint_finetuning_epochs": 0,
+
+    "optimizer_type": "adam",
+    "weight_decay": 0.0001,
+    "scheduler_type": "step",
+
+    "use_l1_loss": false,
+    "use_perceptual_loss": true,
+
+    "device": "auto",
+    "enable_gradient_checkpointing": false,
+    "use_mixed_precision": true,
+
+    "checkpoint_dir": "./checkpoints/inc/genop_unet_diffusion",
+    "checkpoint_frequency": 15,
+    "log_dir": "./logs/inc/genop_unet_diffusion",
+    "log_level": "INFO",
+
+    "early_stopping_patience": 60
+}

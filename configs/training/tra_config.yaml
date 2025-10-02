@@ -1,0 +1,66 @@
+# Transonic Cylinder Flow Training Configuration
+# This replaces hardcoded parameters from training_tra.py
+
+dataset:
+  name: "tra"
+  type: "transonic_cylinder_flow"
+  description: "Two-dimensional transonic cylinder flow simulated with the fluid solver SU2"
+
+model:
+  name: "2D_Tra/128_unet-m2"
+  architecture: "unet"
+  pretrained: false
+  training_noise: 0.0
+
+data_params:
+  batch_size: 64
+  augmentations: ["normalize"]
+  sequence_length: [2, 2]
+  random_sequence_offset: true
+  data_size: [128, 64]
+  dimension: 2
+  sim_fields: ["pres", "density"]
+  sim_params: ["mach"]
+  normalize_mode: "traMixed"
+
+training_params:
+  epochs: 1000
+  learning_rate: 0.0001
+  weight_decay: 0.0
+  exp_lr_gamma: 1.0
+  test_interval: 10
+  save_interval: 100
+
+loss_params:
+  reconstruction_mse: 0.0
+  prediction_mse: 1.0
+  reconstruction_lsim: 0.0
+  prediction_lsim: 0.0
+
+# Dataset filtering configuration
+data_filters:
+  filter_top: ["128_tra"]
+  filter_sim: [[0, 1, 2, 14, 15, 16, 17, 18]]  # Training simulations
+  exclude_filter_sim: true
+  filter_frame: [[0, 1000]]
+
+# Test set configurations
+test_sets:
+  transonic_test:
+    name: "Test Transonic Cylinder Flow"
+    filter_sim: [[19, 20, 21, 22, 23, 24, 25, 26, 27]]
+    filter_frame: [[400, 500]]
+    sequence_length: [[60, 2]]
+
+# Training variants
+variants:
+  unrolled:
+    description: "Unrolled training for improved stability"
+    sequence_length: [8, 2]
+    batch_size: 16
+    model_suffix: "-m8"
+
+  noise_training:
+    description: "Training with added noise"
+    training_noise: 0.01
+    model_suffix: "-noise0.01"

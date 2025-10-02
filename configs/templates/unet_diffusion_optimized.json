@@ -1,0 +1,111 @@
+{
+    "_description": "Optimized template for U-Net + Diffusion generative operators",
+    "_characteristics": "Multi-scale spatial processing, skip connections, excellent for local feature preservation",
+
+    "model_type": "genop-unet-diffusion",
+    "correction_strength": 0.8,
+
+    "_unet_specific_settings": {
+        "batch_size_recommendations": {
+            "inc_64x64": 12,
+            "inc_128x128": 6,
+            "tra_128x128": 3,
+            "iso_64x64": 16
+        },
+        "sequence_length_recommendations": {
+            "inc": 10,
+            "tra": 8,
+            "iso": 12
+        },
+        "multi_scale_training": true
+    },
+
+    "training_schedule": {
+        "stage1_epochs": 150,
+        "stage2_epochs": 75,
+        "stage1_lr": 0.002,
+        "stage2_lr": 0.001,
+        "enable_joint_finetuning": false,
+        "joint_finetuning_epochs": 0
+    },
+
+    "optimization": {
+        "optimizer_type": "adam",
+        "weight_decay": 0.0001,
+        "scheduler_type": "step",
+        "scheduler_step_size": 50,
+        "scheduler_gamma": 0.2,
+        "clip_grad_norm": 1.5
+    },
+
+    "loss_configuration": {
+        "use_l1_loss": false,
+        "l1_loss_weight": 0.1,
+        "use_perceptual_loss": true,
+        "perceptual_loss_weight": 0.15
+    },
+
+    "memory_optimization": {
+        "enable_gradient_checkpointing": false,
+        "use_mixed_precision": true,
+        "adaptive_batch_sizing": true
+    },
+
+    "augmentation_strategy": {
+        "inc": "aggressive",
+        "tra": "conservative",
+        "iso": "aggressive"
+    },
+
+    "dataset_specific_overrides": {
+        "inc": {
+            "channels": 3,
+            "physics_loss_weight": 0.1,
+            "use_augmentation": true,
+            "unet_features": [64, 128, 256, 512]
+        },
+        "tra": {
+            "channels": 4,
+            "shock_loss_weight": 0.25,
+            "use_augmentation": true,
+            "correction_strength": 0.9,
+            "unet_features": [96, 192, 384, 512]
+        },
+        "iso": {
+            "channels": 3,
+            "energy_spectrum_loss_weight": 0.15,
+            "use_augmentation": true,
+            "correction_strength": 0.9,
+            "unet_features": [64, 128, 256, 512, 1024]
+        }
+    },
+
+    "model_architecture": {
+        "encoder_depth": 4,
+        "decoder_depth": 4,
+        "skip_connections": true,
+        "attention_gates": true,
+        "dropout": 0.1,
+        "batch_norm": true
+    },
+
+    "hardware_settings": {
+        "device": "auto",
+        "num_workers": 6,
+        "prefetch_factor": 3,
+        "pin_memory": true
+    },
+
+    "checkpointing": {
+        "checkpoint_frequency": 15,
+        "save_best_only": true,
+        "early_stopping_patience": 60
+    },
+
+    "logging": {
+        "log_level": "INFO",
+        "log_frequency": 10,
+        "tensorboard_enabled": true,
+        "feature_map_visualization": true
+    }
+}

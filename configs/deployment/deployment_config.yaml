@@ -1,0 +1,373 @@
+# Production Deployment Configuration
+# Configuration for deploying the Generative Operator Analysis Framework in production
+
+# Application Configuration
+application:
+  name: genop-analysis-framework
+  version: "1.0.0"
+  environment: production  # Options: development, staging, production
+  debug: false
+
+  # Application metadata
+  metadata:
+    description: "Generative Operator Analysis Framework for Neural Operator Evaluation"
+    maintainer: "GenOp Team"
+    contact: "genop-support@your-org.com"
+    documentation: "https://your-org.github.io/generatively-stabilised-nos/"
+
+# Server Configuration
+server:
+  # Host and port configuration
+  host: "0.0.0.0"
+  port: 8000
+
+  # Worker configuration for production
+  workers: 4
+  worker_class: "uvicorn.workers.UvicornWorker"
+  worker_connections: 1000
+  max_requests: 1000
+  max_requests_jitter: 100
+
+  # Timeout settings
+  timeout: 300
+  keepalive: 2
+  graceful_timeout: 30
+
+  # SSL/TLS configuration
+  ssl:
+    enabled: true
+    cert_file: "/etc/ssl/certs/genop.crt"
+    key_file: "/etc/ssl/private/genop.key"
+    ca_certs: "/etc/ssl/certs/ca-bundle.crt"
+
+# Database Configuration
+database:
+  # Primary database for results storage
+  primary:
+    type: postgresql
+    host: localhost
+    port: 5432
+    database: genop_results
+    username: genop_user
+    password_env: GENOP_DB_PASSWORD
+    pool_size: 20
+    max_overflow: 30
+    pool_timeout: 30
+    pool_recycle: 3600
+
+  # Redis for caching and session storage
+  cache:
+    type: redis
+    host: localhost
+    port: 6379
+    database: 0
+    password_env: GENOP_REDIS_PASSWORD
+    max_connections: 100
+    socket_timeout: 5
+
+  # Time-series database for metrics
+  metrics:
+    type: influxdb
+    host: localhost
+    port: 8086
+    database: genop_metrics
+    username: genop_metrics
+    password_env: GENOP_INFLUX_PASSWORD
+
+# Security Configuration
+security:
+  # Authentication
+  authentication:
+    enabled: true
+    method: "jwt"  # Options: jwt, oauth2, ldap
+    secret_key_env: GENOP_SECRET_KEY
+    algorithm: "HS256"
+    access_token_expire_minutes: 30
+    refresh_token_expire_days: 7
+
+  # Authorization
+  authorization:
+    enabled: true
+    default_permissions: ["read"]
+    admin_permissions: ["read", "write", "admin"]
+
+  # API rate limiting
+  rate_limiting:
+    enabled: true
+    requests_per_minute: 100
+    burst_limit: 200
+
+  # CORS configuration
+  cors:
+    enabled: true
+    allow_origins: ["https://your-domain.com"]
+    allow_methods: ["GET", "POST", "PUT", "DELETE"]
+    allow_headers: ["Authorization", "Content-Type"]
+
+  # Security headers
+  security_headers:
+    hsts: true
+    content_type_options: true
+    frame_options: "DENY"
+    xss_protection: true
+
+# Monitoring Configuration
+monitoring:
+  # Application metrics
+  metrics:
+    enabled: true
+    endpoint: "/metrics"
+    include_in_progress: true
+    include_timing: true
+
+  # Health checks
+  health_checks:
+    enabled: true
+    endpoint: "/health"
+    checks:
+      - database_connection
+      - cache_connection
+      - disk_space
+      - memory_usage
+      - cpu_usage
+
+  # Logging
+  logging:
+    level: INFO
+    format: json
+    output: "file"  # Options: file, stdout, syslog
+    file_path: "/var/log/genop/application.log"
+    max_file_size: "100MB"
+    backup_count: 10
+
+    # Structured logging fields
+    structured_fields:
+      - timestamp
+      - level
+      - message
+      - user_id
+      - request_id
+      - execution_time
+
+  # Distributed tracing
+  tracing:
+    enabled: true
+    service_name: "genop-analysis"
+    jaeger_endpoint: "http://localhost:14268/api/traces"
+    sampling_rate: 0.1
+
+# Resource Management
+resources:
+  # CPU and memory limits
+  limits:
+    cpu_cores: 8
+    memory_gb: 16
+    max_analysis_concurrent: 4
+    max_queue_size: 100
+
+  # Auto-scaling configuration
+  auto_scaling:
+    enabled: true
+    min_workers: 2
+    max_workers: 10
+    target_cpu_utilization: 70
+    scale_up_threshold: 80
+    scale_down_threshold: 30
+
+  # Resource monitoring
+  resource_monitoring:
+    enabled: true
+    check_interval: 30  # seconds
+    alert_thresholds:
+      cpu_usage: 85
+      memory_usage: 90
+      disk_usage: 85
+
+# Storage Configuration
+storage:
+  # File storage for results and artifacts
+  file_storage:
+    type: "s3"  # Options: local, s3, gcs, azure
+    bucket: "genop-analysis-results"
+    region: "us-west-2"
+    access_key_env: AWS_ACCESS_KEY_ID
+    secret_key_env: AWS_SECRET_ACCESS_KEY
+
+  # Temporary storage for processing
+  temp_storage:
+    type: "local"
+    path: "/tmp/genop"
+    max_size_gb: 10
+    cleanup_interval: 3600  # seconds
+
+  # Backup configuration
+  backup:
+    enabled: true
+    schedule: "0 2 * * *"  # Daily at 2 AM
+    retention_days: 30
+    compression: true
+
+# API Configuration
+api:
+  # API versioning
+  versioning:
+    enabled: true
+    default_version: "v1"
+    supported_versions: ["v1"]
+
+  # Request/Response configuration
+  request:
+    max_size_mb: 100
+    timeout_seconds: 300
+
+  response:
+    compression: true
+    cache_control: "no-cache"
+
+  # API documentation
+  documentation:
+    enabled: true
+    openapi_url: "/openapi.json"
+    docs_url: "/docs"
+    redoc_url: "/redoc"
+
+# Queue Configuration
+queue:
+  # Task queue for asynchronous processing
+  task_queue:
+    type: "celery"  # Options: celery, rq, dramatiq
+    broker: "redis://localhost:6379/1"
+    backend: "redis://localhost:6379/2"
+
+  # Worker configuration
+  workers:
+    concurrency: 4
+    max_tasks_per_child: 1000
+    time_limit: 3600
+    soft_time_limit: 3000
+
+  # Queue priorities
+  priorities:
+    high: 9
+    normal: 5
+    low: 1
+
+# Notification Configuration
+notifications:
+  # Email notifications
+  email:
+    enabled: true
+    smtp_server: "smtp.your-org.com"
+    smtp_port: 587
+    smtp_username_env: GENOP_SMTP_USERNAME
+    smtp_password_env: GENOP_SMTP_PASSWORD
+    from_address: "genop-analysis@your-org.com"
+
+  # Slack notifications
+  slack:
+    enabled: false
+    webhook_url_env: GENOP_SLACK_WEBHOOK
+    channel: "#genop-alerts"
+
+  # Alert conditions
+  alerts:
+    - condition: "analysis_failure"
+      severity: "high"
+      recipients: ["admin@your-org.com"]
+    - condition: "high_resource_usage"
+      severity: "medium"
+      recipients: ["ops@your-org.com"]
+
+# Integration Configuration
+integrations:
+  # TensorBoard integration
+  tensorboard:
+    enabled: true
+    log_dir: "/data/tensorboard"
+    port: 6006
+
+  # Weights & Biases
+  wandb:
+    enabled: false
+    project: "genop-production"
+    entity: "your-org"
+    api_key_env: WANDB_API_KEY
+
+  # MLflow
+  mlflow:
+    enabled: false
+    tracking_uri: "http://localhost:5000"
+
+  # External APIs
+  external_apis:
+    timeout: 30
+    retry_attempts: 3
+    retry_delay: 1
+
+# Disaster Recovery
+disaster_recovery:
+  # Backup and recovery
+  backup:
+    enabled: true
+    frequency: "daily"
+    retention: "30 days"
+    location: "s3://genop-backups/"
+
+  # High availability
+  high_availability:
+    enabled: true
+    replication_factor: 2
+    failover_timeout: 30
+
+  # Recovery procedures
+  recovery:
+    automated: true
+    rto_minutes: 15  # Recovery Time Objective
+    rpo_minutes: 60  # Recovery Point Objective
+
+# Deployment Strategy
+deployment:
+  # Deployment method
+  strategy: "rolling"  # Options: rolling, blue_green, canary
+
+  # Rolling deployment configuration
+  rolling:
+    max_unavailable: 1
+    max_surge: 1
+
+  # Health check configuration
+  health_check:
+    path: "/health"
+    initial_delay: 30
+    period: 10
+    timeout: 5
+    failure_threshold: 3
+
+  # Container configuration
+  container:
+    image: "genop-analysis:latest"
+    pull_policy: "Always"
+    restart_policy: "Always"
+
+  # Environment variables
+  environment:
+    PYTHONPATH: "/app/src"
+    GENOP_ENV: "production"
+    GENOP_CONFIG: "/app/config/deployment_config.yaml"
+
+# Development and Testing
+development:
+  # Development server configuration
+  dev_server:
+    auto_reload: false
+    debug: false
+
+  # Testing configuration
+  testing:
+    database_url: "postgresql://test_user:test_pass@localhost/genop_test"
+    redis_url: "redis://localhost:6379/15"
+
+  # Profiling
+  profiling:
+    enabled: false
+    output_dir: "/tmp/profiling"
