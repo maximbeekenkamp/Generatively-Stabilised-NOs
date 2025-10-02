@@ -191,73 +191,32 @@ print("="*60)
 import subprocess
 
 # Data download configuration
+# Download full ZIP files via FTP (works reliably with credentials)
+FTP_BASE = 'ftp://m1734798.001:m1734798.001@dataserv.ub.tum.de:21'
+
 DATA_DOWNLOADS = {
     'tra': {
-        'method': 'wget',
-        'url': 'http://dataserv.ub.tum.de/m1734798/128_tra_small.zip',
-        'size': '301 MB',
+        'method': 'ftp',
+        'url': f'{FTP_BASE}/128_tra_small.zip',
+        'filename': '128_tra_small.zip',
+        'size': '287 MB',
         'extract_to': 'data/'
     },
     'inc': {
-        'method': 'rsync',
-        'rsync_pattern': 'sim_01[0-9]/',  # Downloads sim_010 through sim_019
-        'size': '~1.5 GB (10 simulations)',
-        'extract_to': 'data/128_inc/'
+        'method': 'ftp',
+        'url': f'{FTP_BASE}/128_inc.zip',
+        'filename': '128_inc.zip',
+        'size': '12.8 GB (full dataset)',
+        'extract_to': 'data/'
     },
     'iso': {
-        'method': 'rsync',
-        'rsync_pattern': 'sim_20[0-9]/',  # Downloads sim_200 through sim_209
-        'size': '~1.5 GB (10 simulations)',
-        'extract_to': 'data/128_iso/'
+        'method': 'ftp',
+        'url': f'{FTP_BASE}/128_iso.zip',
+        'filename': '128_iso.zip',
+        'size': '111.6 GB (full dataset)',
+        'extract_to': 'data/'
     }
 }
-
-RSYNC_PASSWORD = 'm1734798.001'
-RSYNC_BASE = f'rsync://{RSYNC_PASSWORD}@dataserv.ub.tum.de/m1734798.001'
-
-def download_checksums():
-    '''Download checksum file for validation'''
-    checksum_path = project_root / 'data' / 'checksums.sha512'
-    if checksum_path.exists():
-        print("  ✅ Checksum file already exists")
-        return True
-
-    print("  🔄 Downloading checksums...")
-    cmd = f"rsync -P {RSYNC_BASE}/checksums.sha512 {project_root / 'data'}/"
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-
-    if result.returncode == 0:
-        print("  ✅ Checksums downloaded")
-        return True
-    else:
-        print(f"  ⚠️ Checksum download failed: {result.stderr}")
-        return False
-
-def validate_checksum(dataset):
-    '''Validate downloaded data using SHA512 checksums'''
-    print(f"  🔍 Validating {dataset.upper()} checksums...")
-
-    checksum_file = project_root / 'data' / 'checksums.sha512'
-    if not checksum_file.exists():
-        print("  ⚠️ Checksum file not found, skipping validation")
-        return True
-
-    # For zip files, validate directly
-    if dataset == 'tra':
-        cmd = f"cd {project_root / 'data'} && sha512sum -c --ignore-missing checksums.sha512 2>/dev/null | grep 128_tra_small.zip"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-
-        if 'OK' in result.stdout:
-            print(f"  ✅ {dataset.upper()} checksum valid")
-            return True
-        else:
-            print(f"  ❌ {dataset.upper()} checksum failed!")
-            return False
-
-    # For rsync downloads, checksums apply to individual .npz files
-    # We'll skip per-file validation for now (would be very slow)
-    print(f"  ⚠️ Skipping per-file checksum for rsync data (would be slow)")
-    return True
 
 def download_dataset(dataset, config):
     '''Download a single dataset with resume capability'''
@@ -270,42 +229,31 @@ def download_dataset(dataset, config):
     print(f"\\n🔄 {dataset.upper()}: Downloading ({config['size']})...")
 
     try:
-        if config['method'] == 'wget':
-            # Download zip file
-            zip_path = project_root / 'data' / f"128_{dataset}_small.zip"
-            if not zip_path.exists():
-                print(f"  📥 Downloading via wget...")
-                cmd = f"wget -q --show-progress {config['url']} -P {project_root / 'data'}/"
-                subprocess.run(cmd, shell=True, check=True)
+        # Download via FTP using curl
+        zip_path = project_root / 'data' / config['filename']
 
-            # Validate checksum
-            if not validate_checksum(dataset):
-                raise Exception("Checksum validation failed")
+        if not zip_path.exists():
+            print(f"  📥 Downloading via FTP...")
+            # Use curl for FTP download with progress
+            cmd = f"curl -o {zip_path} '{config['url']}'"
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise Exception(f"FTP download failed: {result.stderr[:100]}")
 
-            # Extract
-            extract_path = project_root / config['extract_to']
-            extract_path.mkdir(parents=True, exist_ok=True)
-            print(f"  📦 Extracting...")
-            cmd = f"unzip -q -o {zip_path} -d {extract_path}"
-            subprocess.run(cmd, shell=True, check=True)
+        # Verify file was downloaded
+        if not zip_path.exists() or zip_path.stat().st_size < 1000000:  # At least 1 MB
+            raise Exception("Downloaded file is missing or too small")
 
-        elif config['method'] == 'rsync':
-            # Download via rsync with pattern filtering
-            extract_path = project_root / config['extract_to']
-            extract_path.mkdir(parents=True, exist_ok=True)
+        print(f"  ✅ Download complete: {zip_path.stat().st_size / (1024**3):.2f} GB")
 
-            print(f"  📥 Downloading via rsync (pattern: {config['rsync_pattern']})...")
-            pattern = config['rsync_pattern']
-
-            # Rsync with include/exclude patterns
-            cmd = f'''rsync -avz --progress \\
-                --include="{pattern}" \\
-                --include="{pattern}**" \\
-                --exclude="*" \\
-                {RSYNC_BASE}/128_{dataset}/ \\
-                {extract_path}'''
-
-            subprocess.run(cmd, shell=True, check=True)
+        # Extract
+        extract_path = project_root / config['extract_to']
+        extract_path.mkdir(parents=True, exist_ok=True)
+        print(f"  📦 Extracting...")
+        cmd = f"unzip -q -o {zip_path} -d {extract_path}"
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise Exception(f"Extraction failed: {result.stderr[:100]}")
 
         # Mark as complete
         progress['data_generation'][dataset] = 'complete'
@@ -313,27 +261,46 @@ def download_dataset(dataset, config):
         with open(progress_file, 'w') as f:
             json.dump(progress, f, indent=2)
 
-        print(f"  ✅ {dataset.upper()} download complete!")
+        print(f"  ✅ {dataset.upper()} download and extraction complete!")
         return True
 
     except Exception as e:
         print(f"  ❌ {dataset.upper()} download failed: {str(e)[:100]}")
         return False
 
-# Download checksums first
-print("\\n📥 Downloading checksum file...")
-download_checksums()
-
 # Download all datasets
+print("\\n📥 Starting data downloads...")
 datasets = ['tra', 'inc', 'iso']
+download_results = {}
 for dataset in datasets:
-    download_dataset(dataset, DATA_DOWNLOADS[dataset])
+    download_results[dataset] = download_dataset(dataset, DATA_DOWNLOADS[dataset])
 
-print("\\n✅ All data downloads complete!")
-print("\\nℹ️  Data structure:")
-print("  - data/128_tra_small/ (301 MB, single trajectory)")
-print("  - data/128_inc/sim_010-019/ (~1.5 GB, 10 simulations)")
-print("  - data/128_iso/sim_200-209/ (~1.5 GB, 10 simulations)")"""))
+# Summary
+success_count = sum(1 for success in download_results.values() if success)
+print(f"\\n{'='*60}")
+if success_count == len(datasets):
+    print(f"✅ All data downloads complete! ({success_count}/{len(datasets)})")
+    print("\\nℹ️  Data structure:")
+    print("  - data/128_tra_small/ (287 MB, single trajectory)")
+    print("  - data/128_inc/ (12.8 GB, full dataset)")
+    print("  - data/128_iso/ (111.6 GB, full dataset)")
+    progress['data_source'] = 'real'
+else:
+    print(f"⚠️  Partial download: {success_count}/{len(datasets)} datasets downloaded")
+    print("\\n📋 Status:")
+    for dataset, success in download_results.items():
+        symbol = '✅' if success else '❌'
+        print(f"  {symbol} {dataset.upper()}")
+    if success_count == 0:
+        print("\\n⚠️  All downloads failed!")
+        print("   Consider checking network connectivity or using synthetic data fallback")
+    progress['data_source'] = 'partial'
+
+# Save progress
+with open(progress_file, 'w') as f:
+    json.dump(progress, f, indent=2)
+
+print(f"\\n{'='*60}")"""))
 
 # Cell 4: Train All Models using Real Data (Resumable)
 notebook["cells"].append(create_cell("markdown", """## Training Phase
