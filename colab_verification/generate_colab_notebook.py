@@ -136,8 +136,19 @@ print(f"   Progress file: {progress_file}")"""))
 
 # Cell 2: GPU Check
 notebook["cells"].append(create_cell("code", """# Cell 2: GPU Check & Core Imports
+import sys
+import os
+from pathlib import Path
 import torch
 import numpy as np
+
+# Re-add paths (needed in each cell that imports from src)
+project_root = Path('/content/Generatively-Stabilised-NOs')
+sys.path.insert(0, str(project_root))
+
+# Change to project directory
+os.chdir(project_root)
+
 from src.core.utils.environment_setup import initialize_environment
 
 # Initialize environment
@@ -392,6 +403,15 @@ Training all 14 models × 3 datasets = 42 model-dataset combinations.
 Each model uses the real TurbulenceDataset and is saved immediately after training."""))
 
 notebook["cells"].append(create_cell("code", """# Cell 4: Train All Models (Resumable with Real Data)
+import sys
+import os
+from pathlib import Path
+
+# Re-add paths (needed in each cell that imports from src)
+project_root = Path('/content/Generatively-Stabilised-NOs')
+sys.path.insert(0, str(project_root))
+os.chdir(project_root)
+
 print("\\n" + "="*60)
 print("📊 STEP 2: TRAIN ALL MODELS")
 print("="*60)
