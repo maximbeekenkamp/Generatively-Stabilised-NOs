@@ -7,10 +7,20 @@ import json
 
 def create_cell(cell_type, content, metadata=None):
     """Helper to create a notebook cell"""
+    # Jupyter notebooks need each line as a separate string with \n
+    if isinstance(content, str):
+        lines = content.split('\n')
+        # Add \n to all lines except the last one
+        source = [line + '\n' for line in lines[:-1]]
+        if lines[-1]:  # Add last line without \n if it exists
+            source.append(lines[-1])
+    else:
+        source = content
+
     cell = {
         "cell_type": cell_type,
         "metadata": metadata or {},
-        "source": content.split('\n') if isinstance(content, str) else content
+        "source": source
     }
     if cell_type == "code":
         cell["execution_count"] = None
