@@ -192,7 +192,8 @@ import subprocess
 
 # Data download configuration
 # Use FTP for small TRA dataset, generate synthetic data for INC/ISO
-FTP_BASE = 'ftp://m1734798.001:m1734798.001@dataserv.ub.tum.de:21'
+# TODO: Replace with actual FTP credentials from autoreg dataset README
+FTP_BASE = 'ftp://USERNAME:PASSWORD@dataserv.ub.tum.de:21'
 
 DATA_DOWNLOADS = {
     'tra': {
@@ -206,6 +207,7 @@ DATA_DOWNLOADS = {
     'inc': {
         'method': 'synthetic',
         'n_sims': 3,
+        'sim_start_idx': 10,  # Creates sim_010, sim_011, sim_012 (matches filter_sim)
         'n_frames': 50,
         'spatial_res': 128,
         'size': '~50 MB (synthetic)',
@@ -214,6 +216,7 @@ DATA_DOWNLOADS = {
     'iso': {
         'method': 'synthetic',
         'n_sims': 3,
+        'sim_start_idx': 200,  # Creates sim_200, sim_201, sim_202 (matches filter_sim)
         'n_frames': 50,
         'spatial_res': 128,
         'size': '~50 MB (synthetic)',
@@ -221,14 +224,15 @@ DATA_DOWNLOADS = {
     }
 }
 
-def generate_synthetic_dataset(name, n_sims, n_frames, spatial_res):
-    '''Generate synthetic turbulence-like data'''
+def generate_synthetic_dataset(name, n_sims, n_frames, spatial_res, sim_start_idx=0):
+    '''Generate synthetic turbulence-like data with correct sim numbering and required fields'''
     import numpy as np
 
     dataset_path = project_root / 'data' / f'128_{name}'
     dataset_path.mkdir(parents=True, exist_ok=True)
 
-    for sim_idx in range(n_sims):
+    for i in range(n_sims):
+        sim_idx = sim_start_idx + i  # Use correct sim numbering
         sim_dir = dataset_path / f'sim_{sim_idx:03d}'
         sim_dir.mkdir(exist_ok=True)
 
@@ -257,11 +261,32 @@ def generate_synthetic_dataset(name, n_sims, n_frames, spatial_res):
             time_phase = 2 * np.pi * frame_idx / n_frames
             velocity *= (1 + 0.1 * np.sin(time_phase))
 
-            # Save as .npz file
-            np.savez_compressed(
-                sim_dir / f'frame_{frame_idx:04d}.npz',
-                velocity=velocity
-            )
+            # Create data dictionary with required fields based on dataset type
+            data = {'velocity': velocity}
+
+            # Add dataset-specific fields
+            if name == 'inc':
+                # INC needs pressure field
+                pres = np.sum(velocity**2, axis=0) * 0.5  # Simple pressure from velocity
+                data['pres'] = pres.astype(np.float32)
+            elif name == 'iso':
+                # ISO needs 3D velocity (velZ component)
+                velZ = np.random.randn(spatial_res, spatial_res).astype(np.float32) * 0.1
+                data['velZ'] = velZ
+
+            # Save as .npz file with all required fields
+            np.savez_compressed(sim_dir / f'frame_{frame_idx:04d}.npz', **data)
+
+        # Save simulation parameters (metadata file)
+        params = {}
+        if name == 'inc':
+            params['rey'] = 1000.0  # Reynolds number
+        elif name == 'tra':
+            params['rey'] = 1600.0
+            params['mach'] = 0.3  # Mach number for TRA
+
+        if params:
+            np.savez_compressed(sim_dir / 'params.npz', **params)
 
 def download_dataset(dataset, config):
     '''Download or generate a single dataset with resume capability'''
@@ -296,19 +321,23 @@ def download_dataset(dataset, config):
             extract_path = project_root / config['extract_to']
             extract_path.mkdir(parents=True, exist_ok=True)
             print(f"  📦 Extracting...")
-            cmd = f"unzip -q -o {zip_path} -d {extract_path}"
+            # Extract and ensure proper directory structure (data/128_tra_small/)
+            cmd = f"cd {extract_path} && unzip -q -o {zip_path}"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             if result.returncode != 0:
                 raise Exception(f"Extraction failed: {result.stderr[:100]}")
 
         elif config['method'] == 'synthetic':
             # Generate synthetic data
+            sim_start = config.get('sim_start_idx', 0)
             print(f"  📝 Generating synthetic data ({config['n_sims']} sims × {config['n_frames']} frames)...")
+            print(f"      Creating sim_{sim_start:03d} through sim_{sim_start + config['n_sims'] - 1:03d}")
             generate_synthetic_dataset(
                 dataset,
                 config['n_sims'],
                 config['n_frames'],
-                config['spatial_res']
+                config['spatial_res'],
+                config.get('sim_start_idx', 0)
             )
             print(f"  ✅ Synthetic data generated")
 
