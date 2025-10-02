@@ -87,7 +87,7 @@ print("="*60)
 repo_path = Path('/content/Generatively-Stabilised-NOs')
 if not repo_path.exists():
     print("📥 Cloning repository...")
-    !git clone https://github.com/YOUR_USERNAME/Generatively-Stabilised-NOs.git
+    !git clone https://github.com/maximbeekenkamp/Generatively-Stabilised-NOs.git
     print("✅ Repository cloned")
 else:
     print("✅ Repository already exists")
@@ -96,7 +96,7 @@ else:
 
 # Install dependencies
 print("\\n📦 Installing dependencies...")
-!pip install -q neuralop matplotlib seaborn tqdm einops scipy pyyaml
+!pip install -q neuraloperator matplotlib seaborn tqdm einops scipy pyyaml
 print("✅ Dependencies installed")
 
 # Setup Python paths
@@ -191,7 +191,7 @@ print("="*60)
 import subprocess
 
 # Data download configuration
-# Download full ZIP files via FTP (works reliably with credentials)
+# Use FTP for small TRA dataset, generate synthetic data for INC/ISO
 FTP_BASE = 'ftp://m1734798.001:m1734798.001@dataserv.ub.tum.de:21'
 
 DATA_DOWNLOADS = {
@@ -200,60 +200,117 @@ DATA_DOWNLOADS = {
         'url': f'{FTP_BASE}/128_tra_small.zip',
         'filename': '128_tra_small.zip',
         'size': '287 MB',
-        'extract_to': 'data/'
+        'extract_to': 'data/',
+        'description': 'Single trajectory, perfect for verification'
     },
     'inc': {
-        'method': 'ftp',
-        'url': f'{FTP_BASE}/128_inc.zip',
-        'filename': '128_inc.zip',
-        'size': '12.8 GB (full dataset)',
-        'extract_to': 'data/'
+        'method': 'synthetic',
+        'n_sims': 3,
+        'n_frames': 50,
+        'spatial_res': 128,
+        'size': '~50 MB (synthetic)',
+        'description': '3 simulations of incompressible wake flow'
     },
     'iso': {
-        'method': 'ftp',
-        'url': f'{FTP_BASE}/128_iso.zip',
-        'filename': '128_iso.zip',
-        'size': '111.6 GB (full dataset)',
-        'extract_to': 'data/'
+        'method': 'synthetic',
+        'n_sims': 3,
+        'n_frames': 50,
+        'spatial_res': 128,
+        'size': '~50 MB (synthetic)',
+        'description': '3 simulations of isotropic turbulence'
     }
 }
 
+def generate_synthetic_dataset(name, n_sims, n_frames, spatial_res):
+    '''Generate synthetic turbulence-like data'''
+    import numpy as np
+
+    dataset_path = project_root / 'data' / f'128_{name}'
+    dataset_path.mkdir(parents=True, exist_ok=True)
+
+    for sim_idx in range(n_sims):
+        sim_dir = dataset_path / f'sim_{sim_idx:03d}'
+        sim_dir.mkdir(exist_ok=True)
+
+        for frame_idx in range(n_frames):
+            # Create multi-scale turbulent patterns
+            velocity = np.zeros((2, spatial_res, spatial_res), dtype=np.float32)
+
+            # Add multiple frequency scales (energy cascade-like)
+            for scale in [1, 2, 4, 8, 16]:
+                k = 2 * np.pi * scale / spatial_res
+                x = np.linspace(0, 2*np.pi, spatial_res)
+                y = np.linspace(0, 2*np.pi, spatial_res)
+                X, Y = np.meshgrid(x, y)
+
+                # Random phase for this scale
+                phase_u = np.random.rand() * 2 * np.pi
+                phase_v = np.random.rand() * 2 * np.pi
+
+                # Energy decreases with scale (k^-5/3 Kolmogorov)
+                energy = scale ** (-5/3)
+
+                velocity[0] += energy * np.sin(k*X + phase_u) * np.cos(k*Y)
+                velocity[1] += energy * np.cos(k*X) * np.sin(k*Y + phase_v)
+
+            # Add time evolution
+            time_phase = 2 * np.pi * frame_idx / n_frames
+            velocity *= (1 + 0.1 * np.sin(time_phase))
+
+            # Save as .npz file
+            np.savez_compressed(
+                sim_dir / f'frame_{frame_idx:04d}.npz',
+                velocity=velocity
+            )
+
 def download_dataset(dataset, config):
-    '''Download a single dataset with resume capability'''
+    '''Download or generate a single dataset with resume capability'''
 
     # Check if already complete
     if progress['data_generation'].get(dataset) == 'complete':
-        print(f"\\n✅ {dataset.upper()}: Already downloaded (skipping)")
+        print(f"\\n✅ {dataset.upper()}: Already prepared (skipping)")
         return True
 
-    print(f"\\n🔄 {dataset.upper()}: Downloading ({config['size']})...")
+    print(f"\\n🔄 {dataset.upper()}: Preparing ({config['size']})...")
+    print(f"   {config['description']}")
 
     try:
-        # Download via FTP using curl
-        zip_path = project_root / 'data' / config['filename']
+        if config['method'] == 'ftp':
+            # Download via FTP using curl
+            zip_path = project_root / 'data' / config['filename']
 
-        if not zip_path.exists():
-            print(f"  📥 Downloading via FTP...")
-            # Use curl for FTP download with progress
-            cmd = f"curl -o {zip_path} '{config['url']}'"
+            if not zip_path.exists():
+                print(f"  📥 Downloading via FTP...")
+                cmd = f"curl -o {zip_path} '{config['url']}'"
+                result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+                if result.returncode != 0:
+                    raise Exception(f"FTP download failed: {result.stderr[:100]}")
+
+            # Verify file was downloaded
+            if not zip_path.exists() or zip_path.stat().st_size < 1000000:
+                raise Exception("Downloaded file is missing or too small")
+
+            print(f"  ✅ Download complete: {zip_path.stat().st_size / (1024**3):.2f} GB")
+
+            # Extract
+            extract_path = project_root / config['extract_to']
+            extract_path.mkdir(parents=True, exist_ok=True)
+            print(f"  📦 Extracting...")
+            cmd = f"unzip -q -o {zip_path} -d {extract_path}"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             if result.returncode != 0:
-                raise Exception(f"FTP download failed: {result.stderr[:100]}")
+                raise Exception(f"Extraction failed: {result.stderr[:100]}")
 
-        # Verify file was downloaded
-        if not zip_path.exists() or zip_path.stat().st_size < 1000000:  # At least 1 MB
-            raise Exception("Downloaded file is missing or too small")
-
-        print(f"  ✅ Download complete: {zip_path.stat().st_size / (1024**3):.2f} GB")
-
-        # Extract
-        extract_path = project_root / config['extract_to']
-        extract_path.mkdir(parents=True, exist_ok=True)
-        print(f"  📦 Extracting...")
-        cmd = f"unzip -q -o {zip_path} -d {extract_path}"
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise Exception(f"Extraction failed: {result.stderr[:100]}")
+        elif config['method'] == 'synthetic':
+            # Generate synthetic data
+            print(f"  📝 Generating synthetic data ({config['n_sims']} sims × {config['n_frames']} frames)...")
+            generate_synthetic_dataset(
+                dataset,
+                config['n_sims'],
+                config['n_frames'],
+                config['spatial_res']
+            )
+            print(f"  ✅ Synthetic data generated")
 
         # Mark as complete
         progress['data_generation'][dataset] = 'complete'
@@ -261,15 +318,16 @@ def download_dataset(dataset, config):
         with open(progress_file, 'w') as f:
             json.dump(progress, f, indent=2)
 
-        print(f"  ✅ {dataset.upper()} download and extraction complete!")
+        print(f"  ✅ {dataset.upper()} ready!")
         return True
 
     except Exception as e:
-        print(f"  ❌ {dataset.upper()} download failed: {str(e)[:100]}")
+        print(f"  ❌ {dataset.upper()} preparation failed: {str(e)[:100]}")
         return False
 
-# Download all datasets
-print("\\n📥 Starting data downloads...")
+# Prepare all datasets (download TRA, generate INC/ISO)
+print("\\n📥 Starting data preparation...")
+print("   Strategy: Download real TRA (287 MB), generate synthetic INC/ISO (~100 MB total)")
 datasets = ['tra', 'inc', 'iso']
 download_results = {}
 for dataset in datasets:
@@ -279,22 +337,18 @@ for dataset in datasets:
 success_count = sum(1 for success in download_results.values() if success)
 print(f"\\n{'='*60}")
 if success_count == len(datasets):
-    print(f"✅ All data downloads complete! ({success_count}/{len(datasets)})")
+    print(f"✅ All data ready! ({success_count}/{len(datasets)} datasets)")
     print("\\nℹ️  Data structure:")
-    print("  - data/128_tra_small/ (287 MB, single trajectory)")
-    print("  - data/128_inc/ (12.8 GB, full dataset)")
-    print("  - data/128_iso/ (111.6 GB, full dataset)")
-    progress['data_source'] = 'real'
+    print("  - TRA: Real data from TUM server (287 MB)")
+    print("  - INC: Synthetic data (3 sims × 50 frames)")
+    print("  - ISO: Synthetic data (3 sims × 50 frames)")
+    print("\\n  Total: ~400 MB (vs 124+ GB if we downloaded everything!)")
 else:
-    print(f"⚠️  Partial download: {success_count}/{len(datasets)} datasets downloaded")
+    print(f"⚠️  Partial preparation: {success_count}/{len(datasets)} datasets ready")
     print("\\n📋 Status:")
     for dataset, success in download_results.items():
         symbol = '✅' if success else '❌'
         print(f"  {symbol} {dataset.upper()}")
-    if success_count == 0:
-        print("\\n⚠️  All downloads failed!")
-        print("   Consider checking network connectivity or using synthetic data fallback")
-    progress['data_source'] = 'partial'
 
 # Save progress
 with open(progress_file, 'w') as f:
