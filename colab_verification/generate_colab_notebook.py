@@ -158,6 +158,12 @@ from datetime import datetime
 print("🚀 Starting Comprehensive Colab Verification")
 print("="*60)
 
+# Ensure we're in /content directory (in case Cell 0 deleted the repo while we were in it)
+try:
+    os.chdir('/content')
+except:
+    pass
+
 # Clone repository if needed
 repo_path = Path('/content/Generatively-Stabilised-NOs')
 if not repo_path.exists():
