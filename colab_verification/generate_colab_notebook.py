@@ -70,7 +70,82 @@ notebook["cells"].append(create_cell("markdown", """# Comprehensive Colab Verifi
 - ✅ Progress tracking - JSON file tracks completion
 - ✅ Partial backups - download progress anytime
 
-**Expected Runtime**: 2-3 hours on T4 GPU"""))
+**Expected Runtime**: 2-3 hours on T4 GPU
+
+---
+
+**⚠️ IMPORTANT**: If you've updated the code, run **Cell 0** first to clear old data!"""))
+
+# Cell 0: Clean Slate (Optional - run when code changes)
+notebook["cells"].append(create_cell("markdown", """## Cell 0: Clean Slate (Optional)
+
+**Run this cell if:**
+- You've updated the notebook code from GitHub
+- Data generation logic changed
+- You want to start completely fresh
+- Previous runs had errors
+
+**This will delete:**
+- All progress tracking (progress.json)
+- All downloaded/generated data (*.npz, *.zip)
+- All model checkpoints
+- All predictions and visualizations
+
+⚠️ **Only run if you want to start over!**"""))
+
+notebook["cells"].append(create_cell("code", """# Cell 0: Clean Slate - Delete All Previous Data
+import shutil
+from pathlib import Path
+import os
+
+print("🗑️  CLEAN SLATE - Deleting All Previous Data")
+print("="*60)
+
+# Confirm deletion
+print("\\n⚠️  This will DELETE:")
+print("  - All data files (data/*.npz, data/*.zip)")
+print("  - All progress tracking (/content/colab_progress/)")
+print("  - Repository (will be re-cloned fresh)")
+print("\\nℹ️  You'll need to re-run all cells after this.\\n")
+
+confirm = input("Type 'DELETE' to confirm (or anything else to cancel): ")
+
+if confirm == "DELETE":
+    deleted_items = []
+
+    # Delete repository (will re-clone fresh in Cell 1)
+    repo_path = Path('/content/Generatively-Stabilised-NOs')
+    if repo_path.exists():
+        shutil.rmtree(repo_path)
+        deleted_items.append(f"✅ Deleted repository: {repo_path}")
+
+    # Delete progress directory
+    progress_path = Path('/content/colab_progress')
+    if progress_path.exists():
+        shutil.rmtree(progress_path)
+        deleted_items.append(f"✅ Deleted progress: {progress_path}")
+
+    # Delete any leftover data in /content
+    for pattern in ['*.npz', '*.zip', '*.pt']:
+        for file in Path('/content').rglob(pattern):
+            try:
+                file.unlink()
+                deleted_items.append(f"✅ Deleted: {file.name}")
+            except:
+                pass
+
+    print(f"\\n{'='*60}")
+    print(f"🗑️  DELETION COMPLETE")
+    print(f"{'='*60}")
+    for item in deleted_items:
+        print(f"  {item}")
+
+    print(f"\\n✅ Clean slate ready!")
+    print(f"   Now run Cell 1 to start fresh.\\n")
+
+else:
+    print("\\n❌ Deletion cancelled. Nothing was deleted.")
+    print("   Continue with your existing data.\\n")"""))
 
 # Cell 1: Setup
 notebook["cells"].append(create_cell("code", """# Cell 1: Environment Setup
