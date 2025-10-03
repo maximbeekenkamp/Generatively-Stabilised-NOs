@@ -292,6 +292,7 @@ DATA_DOWNLOADS = {
         'method': 'ftp',
         'url': f'{FTP_BASE}/128_tra_small.zip',
         'filename': '128_tra_small.zip',
+        'extracted_dirname': '128_small_tra',  # Actual directory name inside ZIP
         'size': '287 MB',
         'extract_to': 'data/',
         'description': 'Single trajectory, perfect for verification'
@@ -426,7 +427,8 @@ def download_dataset(dataset, config):
                 raise Exception(f"Extraction failed: {result.stderr[:100]}")
 
             # Verify extraction worked
-            expected_dir = extract_path / config['filename'].replace('.zip', '')
+            expected_dirname = config.get('extracted_dirname', config['filename'].replace('.zip', ''))
+            expected_dir = extract_path / expected_dirname
             if not expected_dir.exists():
                 raise Exception(f"Extraction succeeded but {expected_dir} not found")
 
@@ -525,7 +527,7 @@ DATASET_CONFIGS = {
         'normalize_mode': 'incMixed'
     },
     'tra': {
-        'filter_top': ['128_tra_small'],
+        'filter_top': ['128_small_tra'],  # Actual directory name in ZIP
         'filter_sim': [(0, 1)],  # Single trajectory (real data)
         'filter_frame': [(0, 100)],  # Real data has more frames
         'sim_fields': ['dens', 'pres'],

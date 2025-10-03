@@ -68,7 +68,7 @@ class PredictionLoss(nn.modules.loss._Loss):
         if self.dimension == 2:
             # load lsim
             self.lsim = LSIM_Model(baseType="lsim", isTrain=False, useGPU=self.useGPU)
-            self.lsim.load("src/lsim/models/LSiM.pth")
+            self.lsim.load("src/core/utils/lsim/models/LSiM.pth")
             self.lsim.eval()
             # freeze lsim weights
             for param in self.lsim.parameters():
