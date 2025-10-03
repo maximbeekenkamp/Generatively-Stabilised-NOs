@@ -272,21 +272,27 @@ def generate_synthetic_dataset(name, n_sims, n_frames, spatial_res, sim_start_id
             time_phase = 2 * np.pi * frame_idx / n_frames
             velocity *= (1 + 0.1 * np.sin(time_phase))
 
-            # Create data dictionary with required fields based on dataset type
-            data = {'velocity': velocity}
+            # Save velocity field (TurbulenceDataset expects velocity_NNNNNN.npz format)
+            np.savez_compressed(
+                sim_dir / f'velocity_{frame_idx:06d}.npz',
+                velocity=velocity
+            )
 
             # Add dataset-specific fields
             if name == 'inc':
                 # INC needs pressure field
                 pres = np.sum(velocity**2, axis=0) * 0.5  # Simple pressure from velocity
-                data['pres'] = pres.astype(np.float32)
+                np.savez_compressed(
+                    sim_dir / f'pres_{frame_idx:06d}.npz',
+                    pres=pres.astype(np.float32)
+                )
             elif name == 'iso':
                 # ISO needs 3D velocity (velZ component)
                 velZ = np.random.randn(spatial_res, spatial_res).astype(np.float32) * 0.1
-                data['velZ'] = velZ
-
-            # Save as .npz file with all required fields
-            np.savez_compressed(sim_dir / f'frame_{frame_idx:04d}.npz', **data)
+                np.savez_compressed(
+                    sim_dir / f'velZ_{frame_idx:06d}.npz',
+                    velZ=velZ
+                )
 
         # Save simulation parameters (metadata file)
         params = {}
@@ -426,24 +432,24 @@ from src.core.training.loss import PredictionLoss
 DATASET_CONFIGS = {
     'inc': {
         'filter_top': ['128_inc'],
-        'filter_sim': [(10, 20)],  # sim_010 through sim_019
-        'filter_frame': [(800, 900)],  # Reduced for Colab
+        'filter_sim': [(10, 13)],  # sim_010, sim_011, sim_012 (synthetic)
+        'filter_frame': [(0, 50)],  # Frames 0-49 (matches synthetic generation)
         'sim_fields': ['pres'],
         'sim_params': ['rey'],
         'normalize_mode': 'incMixed'
     },
     'tra': {
         'filter_top': ['128_tra_small'],
-        'filter_sim': [(0, 1)],  # Single trajectory
-        'filter_frame': [(0, 100)],  # Reduced for Colab
+        'filter_sim': [(0, 1)],  # Single trajectory (real data)
+        'filter_frame': [(0, 100)],  # Real data has more frames
         'sim_fields': ['dens', 'pres'],
         'sim_params': ['rey', 'mach'],
         'normalize_mode': 'traMixed'
     },
     'iso': {
         'filter_top': ['128_iso'],
-        'filter_sim': [(200, 210)],  # sim_200 through sim_209
-        'filter_frame': [(0, 100)],  # Reduced for Colab
+        'filter_sim': [(200, 203)],  # sim_200, sim_201, sim_202 (synthetic)
+        'filter_frame': [(0, 50)],  # Frames 0-49 (matches synthetic generation)
         'sim_fields': ['velZ'],
         'sim_params': [],
         'normalize_mode': 'isoMixed'
