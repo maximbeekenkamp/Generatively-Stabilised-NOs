@@ -359,20 +359,20 @@ def generate_synthetic_dataset(name, n_sims, n_frames, spatial_res, sim_start_id
                 velocity=velocity
             )
 
-            # Add dataset-specific fields
+            # Add dataset-specific fields (use FULL field names that TurbulenceDataset expects)
             if name == 'inc':
-                # INC needs pressure field
+                # INC needs pressure field (TurbulenceDataset looks for "pressure_*.npz")
                 pres = np.sum(velocity**2, axis=0) * 0.5  # Simple pressure from velocity
                 np.savez_compressed(
-                    sim_dir / f'pres_{frame_idx:06d}.npz',
-                    pres=pres.astype(np.float32)
+                    sim_dir / f'pressure_{frame_idx:06d}.npz',
+                    pressure=pres.astype(np.float32)
                 )
             elif name == 'iso':
-                # ISO needs 3D velocity (velZ component)
+                # ISO needs 3D velocity (TurbulenceDataset looks for "velocityZ_*.npz")
                 velZ = np.random.randn(spatial_res, spatial_res).astype(np.float32) * 0.1
                 np.savez_compressed(
-                    sim_dir / f'velZ_{frame_idx:06d}.npz',
-                    velZ=velZ
+                    sim_dir / f'velocityZ_{frame_idx:06d}.npz',
+                    velocityZ=velZ
                 )
 
         # Save simulation parameters (metadata file)
@@ -419,11 +419,16 @@ def download_dataset(dataset, config):
             extract_path = project_root / config['extract_to']
             extract_path.mkdir(parents=True, exist_ok=True)
             print(f"  📦 Extracting...")
-            # Extract and ensure proper directory structure (data/128_tra_small/)
-            cmd = f"cd {extract_path} && unzip -q -o {zip_path}"
+            # Extract to data directory (creates data/128_tra_small/)
+            cmd = f"unzip -q -o {zip_path.absolute()} -d {extract_path.absolute()}"
             result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
             if result.returncode != 0:
                 raise Exception(f"Extraction failed: {result.stderr[:100]}")
+
+            # Verify extraction worked
+            expected_dir = extract_path / config['filename'].replace('.zip', '')
+            if not expected_dir.exists():
+                raise Exception(f"Extraction succeeded but {expected_dir} not found")
 
         elif config['method'] == 'synthetic':
             # Generate synthetic data
