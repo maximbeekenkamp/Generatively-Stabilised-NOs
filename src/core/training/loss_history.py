@@ -2,12 +2,19 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 # supress warnings and logging caused by tensorflow
 import os
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 from torch.utils.tensorboard import SummaryWriter
+
+# Rich progress bar support
+try:
+    from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 
 class LossHistory(object):
@@ -20,14 +27,19 @@ class LossHistory(object):
     printInterval: int
     logInterval: int
     simFields: List[str]
+    use_rich_progress: bool
 
     accuracy: dict
-
     batchLoss: dict
+
+    # Rich progress bar components
+    progress: Optional['Progress']
+    task_id: Optional[int]
 
 
     def __init__(self, mode:str, modeLong:str, writer:SummaryWriter, dataLoaderLength:int,
-                    epoch:int, epochStep:int, printInterval:int=0, logInterval:int=1, simFields:List[str]=[]):
+                    epoch:int, epochStep:int, printInterval:int=0, logInterval:int=1, simFields:List[str]=[],
+                    use_rich_progress:bool=False):
 
         self.mode = mode
         self.modeLong = modeLong
@@ -38,6 +50,23 @@ class LossHistory(object):
         self.printInterval = printInterval
         self.logInterval = logInterval
         self.simFields = simFields
+        self.use_rich_progress = use_rich_progress and RICH_AVAILABLE
+
+        # Initialize Rich progress bar if requested
+        self.progress = None
+        self.task_id = None
+        if self.use_rich_progress:
+            self.progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TextColumn("{task.fields[loss_text]}"),
+                TimeElapsedColumn(),
+                transient=False  # Keep progress bar visible after completion
+            )
+            self.progress.start()
 
         self.accuracy = {}
 
@@ -62,16 +91,35 @@ class LossHistory(object):
             part = lossParts[name].detach().cpu().item()
             self.batchLoss[name] += [part]
 
-        toPrint = self.printInterval > 0 and sample % self.printInterval == self.printInterval - 1
-        toLog = self.logInterval > 0 and sample % self.logInterval == self.logInterval - 1
-
         loss = lossParts["lossFull"].detach().cpu().item()
-        if toPrint:
-            print('[%2d, %4d] (%2.2f min): %1.4f' % (
-                self.epoch+1, sample+1, timeMin, loss))
-        if toLog:
-            logging.info('[%2d, %4d] (%2.2f min): %1.4f' % (
-                self.epoch+1, sample+1, timeMin, loss))
+
+        # Rich progress bar update
+        if self.use_rich_progress and self.progress is not None:
+            # Create task on first batch
+            if sample == 0:
+                self.task_id = self.progress.add_task(
+                    f"Epoch {self.epoch+1}",
+                    total=self.dataLoaderLength,
+                    loss_text=f"Loss: {loss:.4f}"
+                )
+            else:
+                # Update existing task
+                self.progress.update(
+                    self.task_id,
+                    advance=1,
+                    loss_text=f"Loss: {loss:.4f}"
+                )
+        else:
+            # Original print behavior
+            toPrint = self.printInterval > 0 and sample % self.printInterval == self.printInterval - 1
+            toLog = self.logInterval > 0 and sample % self.logInterval == self.logInterval - 1
+
+            if toPrint:
+                print('[%2d, %4d] (%2.2f min): %1.4f' % (
+                    self.epoch+1, sample+1, timeMin, loss))
+            if toLog:
+                logging.info('[%2d, %4d] (%2.2f min): %1.4f' % (
+                    self.epoch+1, sample+1, timeMin, loss))
 
         # comparisons
         for name, lossTens in lossSeq.items():
@@ -116,6 +164,10 @@ class LossHistory(object):
             if self.accuracy[accName] > part:
                 self.accuracy[accName] = part
 
+        # Complete progress bar for this epoch if using Rich
+        if self.use_rich_progress and self.progress is not None and self.task_id is not None:
+            # Make sure task reaches 100%
+            self.progress.update(self.task_id, completed=self.dataLoaderLength, loss_text=f"Loss: {loss:.4f}")
 
         print("%s Epoch %d (%2.2f min): %1.4f    %s" % (self.modeLong, self.epoch+1, timeMin, loss, partStr))
         print("")
@@ -131,6 +183,13 @@ class LossHistory(object):
     def prepareAndClearForNextEpoch(self):
         self.clear()
         self.epoch += self.epochStep
+        # Reset task_id for next epoch
+        self.task_id = None
+
+    def cleanup(self):
+        """Cleanup Rich progress bar if it exists"""
+        if self.use_rich_progress and self.progress is not None:
+            self.progress.stop()
 
 
     def updateAccuracy(self, params:List, otherHistories:List["LossHistory"], finalPrint:bool):

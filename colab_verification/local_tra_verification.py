@@ -369,7 +369,7 @@ def train_model(model_name: str, config: Dict[str, Any], args, progress_dir: Pat
             normalizeMode=TRA_CONFIG['normalize_mode']
         )
 
-        p_t = TrainingParams(epochs=args.epochs, lr=0.0001)
+        p_t = TrainingParams(epochs=args.epochs, lr=0.0001, expLrGamma=0.995)
 
         # Configure loss params based on flags
         loss_kwargs = {'recMSE': 0.0, 'predMSE': 1.0}
@@ -446,10 +446,11 @@ def train_model(model_name: str, config: Dict[str, Any], args, progress_dir: Pat
         lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=p_t.expLrGamma)
         criterion = PredictionLoss(p_l, p_d.dimension, p_d.simFields, useGPU=use_gpu)
 
-        # Create training history tracker
+        # Create training history tracker with Rich progress bar
         train_history = LossHistory(
             "_train", "Training", writer, len(train_loader),
-            0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields
+            0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields,
+            use_rich_progress=True
         )
 
         # Create Trainer with checkpoint support
@@ -510,6 +511,7 @@ def train_model(model_name: str, config: Dict[str, Any], args, progress_dir: Pat
         print(f"     ✅ Complete! Checkpoint saved.")
 
         # Cleanup
+        train_history.cleanup()  # Stop Rich progress bar
         del model, optimizer, dataset, train_loader
         if use_gpu:
             torch.cuda.empty_cache()

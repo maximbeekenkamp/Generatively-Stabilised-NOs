@@ -394,13 +394,13 @@ def train_model(model_name, config):
             normalizeMode=TRA_CONFIG['normalize_mode']
         )
 
-        # GPU-friendly training parameters: higher epochs and batch size
-        p_t = TrainingParams(epochs=EPOCHS, lr=0.0001)
+        # GPU-friendly training parameters: higher epochs, batch size, and learning rate decay
+        p_t = TrainingParams(epochs=EPOCHS, lr=0.0001, expLrGamma=0.995)
 
-        # Configure loss - TNO L2 loss can be enabled by adding: tno_lp_loss=1.0
-        p_l = LossParams(recMSE=0.0, predMSE=1.0)
+        # Configure loss with LSIM for better perceptual quality on GPU
+        p_l = LossParams(recMSE=0.0, predMSE=1.0, predLSIM=1.0)
         # Optional: Enable TNO relative L2 loss
-        # p_l = LossParams(recMSE=0.0, predMSE=1.0, tno_lp_loss=1.0)
+        # p_l = LossParams(recMSE=0.0, predMSE=1.0, predLSIM=1.0, tno_lp_loss=1.0)
 
         # Create model params using helper function
         p_me, p_md, p_ml, deeponet_overrides = create_model_params(config)
@@ -448,10 +448,11 @@ def train_model(model_name, config):
         lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=p_t.expLrGamma)
         criterion = PredictionLoss(p_l, p_d.dimension, p_d.simFields, useGPU=torch.cuda.is_available())
 
-        # Create training history tracker
+        # Create training history tracker with Rich progress bar
         train_history = LossHistory(
             "_train", "Training", writer, len(train_loader),
-            0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields
+            0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields,
+            use_rich_progress=True
         )
 
         # Create Trainer with checkpoint support
@@ -509,6 +510,7 @@ def train_model(model_name, config):
         print(f"     ✅ Complete!")
 
         # Cleanup
+        train_history.cleanup()  # Stop Rich progress bar
         del model, optimizer, dataset, train_loader
         torch.cuda.empty_cache()
 
