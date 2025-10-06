@@ -28,6 +28,7 @@ class LossHistory(object):
     logInterval: int
     simFields: List[str]
     use_rich_progress: bool
+    total_epochs: Optional[int]
 
     accuracy: dict
     batchLoss: dict
@@ -39,7 +40,7 @@ class LossHistory(object):
 
     def __init__(self, mode:str, modeLong:str, writer:SummaryWriter, dataLoaderLength:int,
                     epoch:int, epochStep:int, printInterval:int=0, logInterval:int=1, simFields:List[str]=[],
-                    use_rich_progress:bool=False):
+                    use_rich_progress:bool=False, total_epochs:Optional[int]=None):
 
         self.mode = mode
         self.modeLong = modeLong
@@ -51,6 +52,7 @@ class LossHistory(object):
         self.logInterval = logInterval
         self.simFields = simFields
         self.use_rich_progress = use_rich_progress and RICH_AVAILABLE
+        self.total_epochs = total_epochs
 
         # Initialize Rich progress bar if requested
         self.progress = None
@@ -67,6 +69,15 @@ class LossHistory(object):
                 transient=False  # Keep progress bar visible after completion
             )
             self.progress.start()
+
+            # If total_epochs > 5, create a single progress bar for all training
+            if self.total_epochs is not None and self.total_epochs > 5:
+                total_batches = self.total_epochs * self.dataLoaderLength
+                self.task_id = self.progress.add_task(
+                    f"{self.modeLong}",
+                    total=total_batches,
+                    loss_text="Loss: N/A"
+                )
 
         self.accuracy = {}
 
@@ -95,20 +106,27 @@ class LossHistory(object):
 
         # Rich progress bar update
         if self.use_rich_progress and self.progress is not None:
-            # Create task on first batch
-            if sample == 0:
-                self.task_id = self.progress.add_task(
-                    f"Epoch {self.epoch+1}",
-                    total=self.dataLoaderLength,
-                    loss_text=f"Loss: {loss:.4f}"
-                )
-            else:
-                # Update existing task
+            if self.total_epochs is not None and self.total_epochs > 5:
+                # Single progress bar for all training
                 self.progress.update(
                     self.task_id,
                     advance=1,
-                    loss_text=f"Loss: {loss:.4f}"
+                    loss_text=f"Epoch {self.epoch+1}/{self.total_epochs} | Loss: {loss:.4f}"
                 )
+            else:
+                # Per-epoch progress bars
+                if sample == 0:
+                    self.task_id = self.progress.add_task(
+                        f"Epoch {self.epoch+1}",
+                        total=self.dataLoaderLength,
+                        loss_text=f"Loss: {loss:.4f}"
+                    )
+                else:
+                    self.progress.update(
+                        self.task_id,
+                        advance=1,
+                        loss_text=f"Loss: {loss:.4f}"
+                    )
         else:
             # Original print behavior
             toPrint = self.printInterval > 0 and sample % self.printInterval == self.printInterval - 1
@@ -164,15 +182,18 @@ class LossHistory(object):
             if self.accuracy[accName] > part:
                 self.accuracy[accName] = part
 
-        # Complete progress bar for this epoch if using Rich
+        # Complete progress bar for this epoch if using Rich (only for per-epoch mode)
         if self.use_rich_progress and self.progress is not None and self.task_id is not None:
-            # Make sure task reaches 100%
-            self.progress.update(self.task_id, completed=self.dataLoaderLength, loss_text=f"Loss: {loss:.4f}")
+            if not (self.total_epochs is not None and self.total_epochs > 5):
+                # Only complete the task for per-epoch progress bars
+                self.progress.update(self.task_id, completed=self.dataLoaderLength, loss_text=f"Loss: {loss:.4f}")
 
-        print("%s Epoch %d (%2.2f min): %1.4f    %s" % (self.modeLong, self.epoch+1, timeMin, loss, partStr))
-        print("")
-        logging.info("%s Epoch %d (%2.2f min): %1.4f    %s" % (self.modeLong, self.epoch+1, timeMin, loss, partStr))
-        logging.info("")
+        # Only print every 5th epoch (or first epoch)
+        if (self.epoch + 1) % 5 == 0 or self.epoch == 0:
+            print("%s Epoch %d (%2.2f min): %1.4f    %s" % (self.modeLong, self.epoch+1, timeMin, loss, partStr))
+            print("")
+            logging.info("%s Epoch %d (%2.2f min): %1.4f    %s" % (self.modeLong, self.epoch+1, timeMin, loss, partStr))
+            logging.info("")
 
         # comparisons
         for name, lossList in self.batchComparison.items():
@@ -183,8 +204,9 @@ class LossHistory(object):
     def prepareAndClearForNextEpoch(self):
         self.clear()
         self.epoch += self.epochStep
-        # Reset task_id for next epoch
-        self.task_id = None
+        # Reset task_id for next epoch (only in per-epoch mode)
+        if not (self.total_epochs is not None and self.total_epochs > 5):
+            self.task_id = None
 
     def cleanup(self):
         """Cleanup Rich progress bar if it exists"""

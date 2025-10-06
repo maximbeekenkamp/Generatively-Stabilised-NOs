@@ -93,8 +93,11 @@ class UnifiedTrainer:
             lr=self.config.training_params.lr,
             weight_decay=self.config.training_params.weightDecay
         )
-        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer, gamma=self.config.training_params.expLrGamma
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            patience=5,
+            factor=self.config.training_params.expLrGamma
         )
         logger.setup(model, optimizer)
 
@@ -115,14 +118,16 @@ class UnifiedTrainer:
         train_history = LossHistory(
             "_train", "Training", logger.tfWriter, len(train_loader),
             0, 1, printInterval=1, logInterval=1,
-            simFields=self.config.data_params.simFields
+            simFields=self.config.data_params.simFields,
+            use_rich_progress=True, total_epochs=self.config.training_params.epochs
         )
 
         # Trainer
         trainer = Trainer(
             model, train_loader, optimizer, lr_scheduler, criterion,
             train_history, logger.tfWriter,
-            self.config.data_params, self.config.training_params
+            self.config.data_params, self.config.training_params,
+            min_epoch_for_scheduler=50
         )
 
         # Test setup

@@ -25,7 +25,7 @@ class Trainer(object):
 
     def __init__(self, model:PredictionModel, trainLoader:DataLoader, optimizer:Optimizer, lrScheduler:_LRScheduler,
             criterion:PredictionLoss, trainHistory:LossHistory, writer:SummaryWriter, p_d:DataParams, p_t:TrainingParams,
-            checkpoint_path:str=None, checkpoint_frequency:int=None):
+            checkpoint_path:str=None, checkpoint_frequency:int=None, min_epoch_for_scheduler:int=50):
         self.model = model
         self.trainLoader = trainLoader
         self.optimizer = optimizer
@@ -37,6 +37,7 @@ class Trainer(object):
         self.p_t = p_t
         self.checkpoint_path = checkpoint_path
         self.checkpoint_frequency = checkpoint_frequency if checkpoint_frequency is not None else 50
+        self.min_epoch_for_scheduler = min_epoch_for_scheduler
 
         self.seqenceLength = self.p_d.sequenceLength[0]
 
@@ -197,10 +198,19 @@ class Trainer(object):
             timerEnd = time.perf_counter()
             self.trainHistory.updateBatch(lossParts, lossSeq, s, (timerEnd-timerStart)/60.0)
 
-        self.lrScheduler.step()
-
         timerEnd = time.perf_counter()
         self.trainHistory.updateEpoch((timerEnd-timerStart)/60.0)
+
+        # Step scheduler only after minimum epoch threshold
+        if epoch >= self.min_epoch_for_scheduler:
+            # Get the loss from trainHistory
+            epoch_loss = self.trainHistory.accuracy.get('l_Loss', float('inf'))
+            # ReduceLROnPlateau expects the metric to monitor
+            if hasattr(self.lrScheduler, 'step') and 'metrics' in str(self.lrScheduler.step.__code__.co_varnames):
+                self.lrScheduler.step(epoch_loss)
+            else:
+                # Fallback for other schedulers
+                self.lrScheduler.step()
 
         if epoch % 50 == 49:
             self.model.eval()

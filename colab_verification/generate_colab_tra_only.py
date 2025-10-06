@@ -445,14 +445,19 @@ def train_model(model_name, config):
 
         # Setup optimizer and scheduler
         optimizer = torch.optim.Adam(model.parameters(), lr=p_t.lr)
-        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=p_t.expLrGamma)
+        lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            patience=5,
+            factor=p_t.expLrGamma
+        )
         criterion = PredictionLoss(p_l, p_d.dimension, p_d.simFields, useGPU=torch.cuda.is_available())
 
         # Create training history tracker with Rich progress bar
         train_history = LossHistory(
             "_train", "Training", writer, len(train_loader),
             0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields,
-            use_rich_progress=True
+            use_rich_progress=True, total_epochs=p_t.epochs
         )
 
         # Create Trainer with checkpoint support
@@ -460,7 +465,8 @@ def train_model(model_name, config):
             model, train_loader, optimizer, lr_scheduler, criterion,
             train_history, writer, p_d, p_t,
             checkpoint_path=str(checkpoint_path),
-            checkpoint_frequency=max(1, p_t.epochs // 5)  # Save 5 checkpoints during training
+            checkpoint_frequency=max(1, p_t.epochs // 5),  # Save 5 checkpoints during training
+            min_epoch_for_scheduler=10  # Start LR scheduling earlier on Colab
         )
 
         print(f"     Training {p_t.epochs} epochs on {len(dataset)} samples using Trainer class...")
@@ -468,10 +474,6 @@ def train_model(model_name, config):
         # Training loop using Trainer.trainingStep()
         for epoch in range(p_t.epochs):
             trainer.trainingStep(epoch)
-
-            # Print progress
-            if (epoch + 1) % max(1, p_t.epochs // 10) == 0 or epoch == 0:
-                print(f"     Epoch {epoch+1}/{p_t.epochs} complete")
 
         # Save checkpoint with enhanced config for architecture reproduction
         enhanced_config = config.copy()
