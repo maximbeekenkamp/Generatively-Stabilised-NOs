@@ -12,6 +12,7 @@ __pycache__/
 data/128_inc/
 data/128_tra/
 data/128_iso/
+data/128_small_tra/
 data/256_inc/
 data/256_tra/
 data/*.zip
@@ -37,6 +38,22 @@ models/**/*.pth
 runs/
 *.log
 tensorboard_logs/
+
+# Local verification outputs (from colab_verification/local_tra_verification.py)
+local_progress/
+local_progress/checkpoints/
+local_progress/logs/
+local_progress/plots/
+local_progress/sampling/
+local_progress/*.json
+local_progress/*.csv
+
+# Generated plot scripts (auto-generated from templates)
+src/analysis/generated_plots/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb_checkpoints
 
 # Environment
 .env

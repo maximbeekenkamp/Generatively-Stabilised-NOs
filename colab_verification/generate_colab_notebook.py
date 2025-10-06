@@ -177,7 +177,8 @@ else:
 
 # Install dependencies
 print("\\n📦 Installing dependencies...")
-!pip install -q neuraloperator matplotlib seaborn tqdm einops scipy pyyaml
+# Fix protobuf compatibility with Python 3.13+ and tensorboard
+!pip install -q neuraloperator matplotlib seaborn tqdm einops scipy pyyaml "protobuf>=3.20.0,<4.0.0" tensorboard
 print("✅ Dependencies installed")
 
 # Setup Python paths

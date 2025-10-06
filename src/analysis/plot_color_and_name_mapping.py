@@ -19,6 +19,14 @@ colorRemap = {
 
 "FNO16": mpl.colormaps["tab20"].resampled(20)(range(20))[17],
 "FNO32": "tab:olive",
+"FNO": "tab:olive",
+"TNO": mpl.colormaps["tab20"].resampled(20)(range(20))[5],
+"DeepONet": mpl.colormaps["tab20"].resampled(20)(range(20))[11],
+
+"FNO+DM": mpl.colormaps["Oranges"].resampled(10)(range(10))[6],
+"TNO+DM": mpl.colormaps["Purples"].resampled(10)(range(10))[6],
+"UNet+DM": mpl.colormaps["Blues"].resampled(10)(range(10))[7],
+"DeepONet+DM": mpl.colormaps["Greens"].resampled(10)(range(10))[6],
 
 "DFP": "chartreuse",
 "DFP-ACDM": "tan",
@@ -78,18 +86,6 @@ colorRemap = {
 "Refiner-r8-std0.00001":   mpl.colormaps["YlGn"].resampled(20)(range(20))[13],
 "Refiner-r8-std0.000001":  mpl.colormaps["YlGn"].resampled(20)(range(20))[16],
 "Refiner-r8-std0.0000001": mpl.colormaps["YlGn"].resampled(20)(range(20))[19],
-
-# Neural Operators (Standalone)
-"FNO": "tab:olive",
-"TNO": mpl.colormaps["tab20"].resampled(20)(range(20))[13],
-"UNet": "tab:blue",
-"DeepONet": mpl.colormaps["tab20"].resampled(20)(range(20))[11],
-
-# Neural Operators + Diffusion Model (NO+DM)
-"FNO+DM": mpl.colormaps["YlOrBr"].resampled(12)(range(12))[7],
-"TNO+DM": mpl.colormaps["PuBu"].resampled(12)(range(12))[7],
-"UNet+DM": mpl.colormaps["Blues"].resampled(12)(range(12))[7],
-"DeepONet+DM": mpl.colormaps["Greens"].resampled(12)(range(12))[7],
 }
 
 modelRemap = {
@@ -105,6 +101,14 @@ modelRemap = {
 
 "FNO16": r"$\mathit{FNO}_{16}$",
 "FNO32": r"$\mathit{FNO}_{32}$",
+"FNO": r"$\mathit{FNO}$",
+"TNO": r"$\mathit{TNO}$",
+"DeepONet": r"$\mathit{DeepONet}$",
+
+"FNO+DM": r"$\mathit{FNO{+}DM}$",
+"TNO+DM": r"$\mathit{TNO{+}DM}$",
+"UNet+DM": r"$\mathit{UNet{+}DM}$",
+"DeepONet+DM": r"$\mathit{DeepONet{+}DM}$",
 
 "DFP": r"$\mathit{DFP}$",
 "DFP-ACDM": r"$\mathit{DFP}_{\mathit{ACDM}}$",
@@ -162,18 +166,6 @@ modelRemap = {
 "Refiner-r8-std0.00001": r"$\mathit{Refiner}_{\mathit{R8,\sigma1e-5}}$",
 "Refiner-r8-std0.000001": r"$\mathit{Refiner}_{\mathit{R8,\sigma1e-6}}$",
 "Refiner-r8-std0.0000001": r"$\mathit{Refiner}_{\mathit{R8,\sigma1e-7}}$",
-
-# Neural Operators (Standalone)
-"FNO": r"$\mathit{FNO}$",
-"TNO": r"$\mathit{TNO}$",
-"UNet": r"$\mathit{UNet}$",
-"DeepONet": r"$\mathit{DeepONet}$",
-
-# Neural Operators + Diffusion Model (NO+DM)
-"FNO+DM": r"$\mathit{FNO{+}DM}$",
-"TNO+DM": r"$\mathit{TNO{+}DM}$",
-"UNet+DM": r"$\mathit{UNet{+}DM}$",
-"DeepONet+DM": r"$\mathit{DeepONet{+}DM}$",
 }
 
 datasetRemap = {

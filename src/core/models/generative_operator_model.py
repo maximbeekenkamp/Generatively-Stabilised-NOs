@@ -369,6 +369,7 @@ def create_generative_operator_model(prior_name: str,
                                    corrector_name: str,
                                    p_md: ModelParamsDecoder,
                                    p_d: DataParams,
+                                   pretrain_checkpoint: str = None,
                                    **kwargs) -> GenerativeOperatorModel:
     """
     Factory function to create generative operator models using the registry.
@@ -378,6 +379,7 @@ def create_generative_operator_model(prior_name: str,
         corrector_name: Name of registered generative corrector
         p_md: Model parameters
         p_d: Data parameters
+        pretrain_checkpoint: Path to pretrained prior checkpoint (optional)
         **kwargs: Additional configuration
 
     Returns:
@@ -386,13 +388,80 @@ def create_generative_operator_model(prior_name: str,
     Raises:
         ValueError: If models are not registered or incompatible
     """
+    import os
+    import torch
+
     # Validate combination
     if not ModelRegistry.validate_combination(prior_name, corrector_name):
         raise ValueError(f"Invalid combination: {prior_name} + {corrector_name}")
 
-    # Create models
+    # Load pretrained checkpoint FIRST to extract config before creating models
+    checkpoint = None
+    checkpoint_config = None
+    if pretrain_checkpoint and p_md.pretrained and os.path.exists(pretrain_checkpoint):
+        logging.info(f"Loading pretrained checkpoint to extract config: {pretrain_checkpoint}")
+        try:
+            checkpoint = torch.load(pretrain_checkpoint, map_location='cpu', weights_only=False)
+            checkpoint_config = checkpoint.get('config', {})
+
+            # For DeepONet priors, extract and apply architecture config to p_md
+            if 'deeponet' in prior_name.lower() and checkpoint_config:
+                deeponet_keys = ['branch_batch_norm', 'trunk_batch_norm', 'branch_layers', 'trunk_layers',
+                               'branch_activation', 'trunk_activation', 'branch_dropout', 'trunk_dropout']
+                for key in deeponet_keys:
+                    if key in checkpoint_config:
+                        setattr(p_md, key, checkpoint_config[key])
+                        logging.info(f"Applied checkpoint config: {key} = {checkpoint_config[key]}")
+
+        except Exception as e:
+            logging.error(f"Failed to load checkpoint config: {e}")
+            logging.warning("Continuing with default architecture")
+            checkpoint = None
+    elif pretrain_checkpoint and p_md.pretrained:
+        logging.warning(f"Pretrained checkpoint not found: {pretrain_checkpoint}")
+        logging.warning("Continuing with randomly initialized prior")
+
+    # Create models (prior will now use config from checkpoint if available)
     prior_model = ModelRegistry.create_prior(prior_name, p_md, p_d, **kwargs)
     corrector_model = ModelRegistry.create_corrector(corrector_name, p_md, p_d, **kwargs)
+
+    # Load pretrained weights if checkpoint was loaded
+    if checkpoint is not None:
+        logging.info(f"Loading pretrained prior weights from checkpoint")
+        try:
+            # Extract prior state dict (remove 'modelDecoder.' prefix from standalone model)
+            # and add adapter wrapper prefix (fno_model, unet_model, etc.)
+            prior_state = {}
+
+            # Determine adapter wrapper prefix based on prior type
+            wrapper_map = {
+                'fno': 'fno_model.',
+                'unet': 'unet_model.',
+                'tno': 'tno_model.',
+                'deeponet': 'deeponet_wrapper.'
+            }
+            wrapper_prefix = wrapper_map.get(prior_name.lower(), '')
+
+            for k, v in checkpoint['model_state_dict'].items():
+                if k.startswith('modelDecoder.'):
+                    # Remove 'modelDecoder.' and add adapter wrapper prefix
+                    new_key = wrapper_prefix + k.replace('modelDecoder.', '')
+                    prior_state[new_key] = v
+
+            # Load state dict into prior model
+            if prior_state:
+                missing_keys, unexpected_keys = prior_model.load_state_dict(prior_state, strict=False)
+                logging.info(f"Loaded pretrained prior: {len(prior_state)} parameters")
+                if missing_keys:
+                    logging.warning(f"Missing keys: {missing_keys[:5]}..." if len(missing_keys) > 5 else f"Missing keys: {missing_keys}")
+                if unexpected_keys:
+                    logging.warning(f"Unexpected keys: {unexpected_keys[:5]}..." if len(unexpected_keys) > 5 else f"Unexpected keys: {unexpected_keys}")
+            else:
+                logging.warning(f"No 'modelDecoder.' parameters found in checkpoint, skipping pretrained loading")
+
+        except Exception as e:
+            logging.error(f"Failed to load pretrained prior weights: {e}")
+            logging.warning("Continuing with randomly initialized prior")
 
     # Create wrapper
     genop_model = GenerativeOperatorModel(

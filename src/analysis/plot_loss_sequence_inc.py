@@ -1,22 +1,12 @@
 import os
-import sys
 import torch
 import torch.nn.functional as F
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1.inset_locator import mark_inset, zoomed_inset_axes
 
-# Add project root to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-try:
-    from src.core.utils.lsim.distance_model import DistanceModel as LSIM_Model
-except ImportError:
-    print("Warning: LSIM model not available")
-    LSIM_Model = None
-
-from src.core.utils.visualization_utils import get_lsim_loss_function
-loss_lsim = get_lsim_loss_function()
+from lsim.distance_model import DistanceModel as LSIM_Model
+from turbpred.loss import loss_lsim
 
 from plot_color_and_name_mapping import getColor, getModelName, getDatasetName, getFieldIndex, getLossRelevantFields, getColormapAndNorm
 

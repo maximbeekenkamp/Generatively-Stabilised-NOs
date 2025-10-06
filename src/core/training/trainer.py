@@ -24,7 +24,8 @@ class Trainer(object):
     p_t: TrainingParams
 
     def __init__(self, model:PredictionModel, trainLoader:DataLoader, optimizer:Optimizer, lrScheduler:_LRScheduler,
-            criterion:PredictionLoss, trainHistory:LossHistory, writer:SummaryWriter, p_d:DataParams, p_t:TrainingParams):
+            criterion:PredictionLoss, trainHistory:LossHistory, writer:SummaryWriter, p_d:DataParams, p_t:TrainingParams,
+            checkpoint_path:str=None, checkpoint_frequency:int=None):
         self.model = model
         self.trainLoader = trainLoader
         self.optimizer = optimizer
@@ -34,6 +35,8 @@ class Trainer(object):
         self.writer = writer
         self.p_d = p_d
         self.p_t = p_t
+        self.checkpoint_path = checkpoint_path
+        self.checkpoint_frequency = checkpoint_frequency if checkpoint_frequency is not None else 50
 
         self.seqenceLength = self.p_d.sequenceLength[0]
 
@@ -104,15 +107,32 @@ class Trainer(object):
             fadeWeight = fade if fade > 0 else 1
             useLatent = fade > 0
 
-            prediction, latentSpace, vaeMeanVar = self.model(data, simParameters, useLatent=useLatent)
+            # Get model output - handle both standard and diffusion model returns
+            model_output = self.model(data, simParameters, useLatent=useLatent)
+
+            # Diffusion models (ACDM, Refiner, etc.) return (noise, predictedNoise) during training
+            # Standard models return (prediction, latentSpace, vaeMeanVar)
+            if len(model_output) == 2:
+                # Diffusion model: keep as tuple for loss calculation
+                prediction = model_output
+                latentSpace = None
+                vaeMeanVar = (None, None)
+            else:
+                # Standard model: unpack 3-tuple
+                prediction, latentSpace, vaeMeanVar = model_output
 
             if self.currentSeqLen < self.seqenceLength:
-                if not vaeMeanVar[0] is None and not vaeMeanVar[1] is None:
+                if vaeMeanVar[0] is not None and vaeMeanVar[1] is not None:
                     vaeMeanVar = (vaeMeanVar[0][:,0:self.currentSeqLen], vaeMeanVar[1][:,0:self.currentSeqLen])
 
-                p = prediction[:,0:self.currentSeqLen]
+                # Handle tuple predictions (diffusion models)
+                if isinstance(prediction, tuple):
+                    p = tuple(pred[:,0:self.currentSeqLen] if pred is not None else None for pred in prediction)
+                else:
+                    p = prediction[:,0:self.currentSeqLen]
+
                 d = data[:,0:self.currentSeqLen]
-                l = latentSpace[:,0:self.currentSeqLen]
+                l = latentSpace[:,0:self.currentSeqLen] if latentSpace is not None else None
             else:
                 p = prediction
                 d = data
@@ -161,7 +181,7 @@ class Trainer(object):
                 
                 # Coordinate TNO's L with curriculum learning if enabled
                 if hasattr(self.model, 'modelDecoder') and hasattr(self.model.modelDecoder, 'L'):
-                    if self.p_d.fadeInSeqLen and hasattr(self, 'currentSeqLen'):
+                    if self.p_t.fadeInSeqLen[0] > 0 and hasattr(self, 'currentSeqLen'):
                         # Adapt TNO's history length based on curriculum
                         effective_L = min(self.model.modelDecoder.L, self.currentSeqLen - 1)
                         if effective_L != self.model.modelDecoder.L and s == 0:  # Log once per epoch
@@ -196,6 +216,22 @@ class Trainer(object):
                 self.trainHistory.writeSequenceLoss(lossSeq)
 
         self.trainHistory.prepareAndClearForNextEpoch()
+
+        # Periodic checkpoint saving
+        if self.checkpoint_path and self.checkpoint_frequency and (epoch + 1) % self.checkpoint_frequency == 0:
+            import os
+            checkpoint_dir = os.path.dirname(self.checkpoint_path)
+            if checkpoint_dir:
+                os.makedirs(checkpoint_dir, exist_ok=True)
+
+            checkpoint_data = {
+                'epoch': epoch,
+                'model_state_dict': self.model.state_dict(),
+                'optimizer_state_dict': self.optimizer.state_dict(),
+                'scheduler_state_dict': self.lrScheduler.state_dict(),
+            }
+            torch.save(checkpoint_data, self.checkpoint_path)
+            logging.info(f"Checkpoint saved at epoch {epoch+1}: {self.checkpoint_path}")
 
 
 
@@ -267,4 +303,63 @@ class Tester(object):
             self.testHistory.writeSequenceLoss(lossSeq)
 
             self.testHistory.prepareAndClearForNextEpoch()
+
+
+    def generatePredictions(self, output_path:str=None):
+        """
+        Generate predictions from the model and optionally save to .npz file.
+
+        This method runs the model on the test loader and collects all predictions
+        in the autoreg .npz format: [num_sequences, timesteps, channels, H, W]
+
+        Args:
+            output_path: Path to save .npz file. If None, just returns predictions.
+
+        Returns:
+            predictions: numpy array of shape [num_sequences, timesteps, channels, H, W]
+        """
+        import numpy as np
+        import os
+
+        assert (len(self.testLoader) > 0), "Not enough samples for prediction generation!"
+
+        logging.info(f"Generating predictions with {len(self.testLoader)} batches...")
+
+        self.model.eval()
+        all_predictions = []
+
+        with torch.no_grad():
+            for s, sample in enumerate(self.testLoader, 0):
+                device = "cuda" if self.model.useGPU else "cpu"
+                data = sample["data"].to(device)
+                simParameters = sample["simParameters"].to(device) if type(sample["simParameters"]) is not dict else None
+
+                # Generate prediction
+                prediction, _, _ = self.model(data, simParameters, useLatent=True)
+
+                # Move to CPU and convert to numpy
+                # prediction shape: [B, T, C, H, W]
+                pred_np = prediction.cpu().numpy()
+                all_predictions.append(pred_np)
+
+                if (s + 1) % 10 == 0:
+                    logging.info(f"  Processed {s+1}/{len(self.testLoader)} batches")
+
+        # Concatenate all batches along batch dimension
+        # Result: [total_sequences, timesteps, channels, H, W]
+        predictions = np.concatenate(all_predictions, axis=0)
+
+        logging.info(f"Generated predictions with shape: {predictions.shape}")
+
+        # Save to .npz if path provided
+        if output_path is not None:
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+
+            # Save in autoreg format
+            np.savez_compressed(output_path, arr_0=predictions)
+            logging.info(f"Saved predictions to: {output_path}")
+
+        return predictions
 

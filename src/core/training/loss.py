@@ -26,8 +26,11 @@ def loss_lsim(lsimModel:nn.Module, x:torch.Tensor, y:torch.Tensor) -> torch.Tens
     xMax = torch.amax(x, dim=(1,3,4), keepdim=True)
     yMin = torch.amin(y, dim=(1,3,4), keepdim=True)
     yMax = torch.amax(y, dim=(1,3,4), keepdim=True)
-    ref = 255 * ((x - xMin) / (xMax - xMin))
-    oth = 255 * ((y - yMin) / (yMax - yMin))
+
+    # Add epsilon to prevent division by zero when output is constant
+    eps = 1e-8
+    ref = 255 * ((x - xMin) / (xMax - xMin + eps))
+    oth = 255 * ((y - yMin) / (yMax - yMin + eps))
     ##dMin = torch.minimum(xMin, yMin)
     ##dMax = torch.maximum(xMax, yMax)
     ##ref = 255 * ((x - dMin) / (dMax - dMin))
@@ -87,8 +90,28 @@ class PredictionLoss(nn.modules.loss._Loss):
 
     def forward(self, prediction:torch.Tensor, groundTruth:torch.Tensor, latentSpace:torch.Tensor, vaeMeanVar:Tuple[torch.Tensor, torch.Tensor],
             weighted:bool=True, fadePredWeight:float=1, noLSIM:bool=False, ignorePredLSIMSteps:int=0) -> Tuple[torch.Tensor, dict, dict]:
-        assert(not ((self.p_l.predMSE > 0) and prediction.shape[1] <= 1)), "Sequence length to small for prediction errors!"
         device = "cuda" if self.useGPU else "cpu"
+
+        # Handle diffusion model training: prediction is (noise, predictedNoise) tuple
+        if isinstance(prediction, tuple) and len(prediction) == 2:
+            noise, predictedNoise = prediction
+            # Diffusion loss: MSE between actual noise and predicted noise
+            loss = F.mse_loss(predictedNoise, noise)
+
+            # Return complete lossParts dict matching expected format
+            zero_loss = torch.zeros(1).to(device)
+            lossParts = {
+                'lossFull': loss,
+                'lossRecMSE': zero_loss,
+                'lossRecLSIM': zero_loss,
+                'lossPredMSE': loss,
+                'lossPredLSIM': zero_loss,
+                'lossTNO': zero_loss,
+            }
+            lossSeq = {'MSE': zero_loss, 'LSIM': zero_loss}
+            return loss, lossParts, lossSeq
+
+        assert(not ((self.p_l.predMSE > 0) and prediction.shape[1] <= 1)), "Sequence length to small for prediction errors!"
 
         if not weighted:
             if self.dimension == 2:

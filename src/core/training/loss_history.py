@@ -47,6 +47,7 @@ class LossHistory(object):
         self.batchLoss = {
             "lossFull" : [], "lossRecMSE" : [], "lossRecLSIM" : [],
             "lossPredMSE" : [], "lossPredLSIM" : [],
+            "lossTNO" : [],  # TNO relative L2 loss
         }
         self.batchComparison = {
             "compRec1.PredMSE" : [], "compRec1.PredLSIM" : [],

@@ -280,7 +280,8 @@ class ModelParamsEncoder(object):
 
 class ModelParamsDecoder(object):
     def __init__(self, arch="skip", pretrained=False, frozen=False, decWidth=48, vae=False, trainingNoise=0.0,
-                 diffSteps=500, diffSchedule="linear", diffCondIntegration="noisy", fnoModes=(16,16), refinerStd=0.0):
+                 diffSteps=500, diffSchedule="linear", diffCondIntegration="noisy", fnoModes=(16,16), refinerStd=0.0,
+                 n_sensors=None, training_stage=None):
         self.arch = arch                 # architecture variant
         self.pretrained = pretrained     # load pretrained weight initialization
         self.frozen = frozen             # freeze weights after initialization
@@ -292,6 +293,8 @@ class ModelParamsDecoder(object):
         self.diffCondIntegration = diffCondIntegration # integrationg of conditioning during diffusion training
         self.fnoModes = fnoModes         # number of fourier modes for FNO setup
         self.refinerStd = refinerStd     # noise standard dev. in pde refiner setup
+        self.n_sensors = n_sensors       # number of sensors for DeepONet
+        self.training_stage = training_stage  # training stage for generative operators (1=prior_only, 2=corrector)
 
     @classmethod
     def fromDict(cls, d:dict):

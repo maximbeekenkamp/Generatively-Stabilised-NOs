@@ -51,20 +51,24 @@ notebook = {
 
 # Title
 notebook["cells"].append(create_cell("markdown", """# TRA-Only Colab Verification
-## Simplified Neural Operator Testing
+## Complete Model Testing on Real Data
 
-**Purpose**: Verify core training pipeline with real TRA data
+**Purpose**: Verify ALL models work with real TRA turbulence data
 
-**Models Tested**: FNO, TNO, UNet, ResNet, ACDM, Refiner
+**Models Tested** (13 total):
+- **Neural Operators (4)**: FNO, TNO, UNet, DeepONet
+- **NO + Diffusion (4)**: FNO+DM, TNO+DM, UNet+DM, DeepONet+DM
+- **Legacy Deterministic (3)**: ResNet, Dil-ResNet, Latent-MGN
+- **Legacy Diffusion (2)**: ACDM, Refiner
 
-**Dataset**: TRA (128_small_tra) - 287 MB of real turbulence data
+**Dataset**: TRA (128_small_tra) - 287 MB of real turbulence data from TUM server
 
 **Why TRA-only?**
-- Real data from TUM server
-- Proven data format (no synthetic issues)
-- Tests complete pipeline: download → train → predict → visualize
+- Real data with proven format (no synthetic data issues)
+- Tests complete pipeline: download → train → checkpoints
+- Verifies all model architectures work
 
-**Expected Runtime**: ~30 minutes on T4 GPU"""))
+**Expected Runtime**: ~50 minutes on T4 GPU (13 models × 3 epochs)"""))
 
 # Cell 0: Clean Slate
 notebook["cells"].append(create_cell("markdown", """## Cell 0: Clean Slate (Optional)
@@ -117,7 +121,8 @@ else:
 
 # Install dependencies
 print("\\n📦 Installing dependencies...")
-!pip install -q neuraloperator matplotlib seaborn tqdm einops scipy pyyaml
+# Fix protobuf compatibility with Python 3.13+ and tensorboard
+!pip install -q neuraloperator matplotlib seaborn tqdm einops scipy pyyaml "protobuf>=3.20.0,<4.0.0" tensorboard
 print("✅ Dependencies installed")
 
 # Setup paths
@@ -207,7 +212,15 @@ print("="*60)"""))
 # Cell 4: Train Models (TRA only)
 notebook["cells"].append(create_cell("markdown", """## Training Phase
 
-Training 6 models on TRA dataset only."""))
+Training ALL 13 models on TRA dataset:
+- **Neural Operators (4)**: FNO, TNO, UNet, DeepONet
+- **NO + Diffusion (4)**: FNO+DM, TNO+DM, UNet+DM, DeepONet+DM
+- **Legacy Deterministic (3)**: ResNet, Dil-ResNet, Latent-MGN
+- **Legacy Diffusion (2)**: ACDM, Refiner
+
+Each model trains for 3 epochs (5 batches per epoch for quick verification)
+
+**Total**: 13 models × 3 epochs ≈ 50 minutes on T4 GPU"""))
 
 notebook["cells"].append(create_cell("code", """# Cell 4: Train Models (TRA Only)
 import sys
@@ -221,9 +234,11 @@ os.chdir(project_root)
 
 from src.core.data_processing.turbulence_dataset import TurbulenceDataset
 from src.core.data_processing.data_transformations import Transforms
-from src.core.utils.params import DataParams, TrainingParams, LossParams, ModelParamsDecoder
+from src.core.utils.params import DataParams, TrainingParams, LossParams, ModelParamsDecoder, ModelParamsEncoder, ModelParamsLatent
 from src.core.models.model import PredictionModel
 from src.core.training.loss import PredictionLoss
+from src.core.training.trainer import Trainer
+from src.core.training.loss_history import LossHistory
 from torch.utils.data import DataLoader
 
 print("="*60)
@@ -240,12 +255,89 @@ TRA_CONFIG = {
     'normalize_mode': 'traMixed'
 }
 
-# Models to test
+# Models to test (13 models matching local_tra_verification.py)
 MODELS = {
+    # Neural Operators (Standalone)
     'fno': {'arch': 'fno', 'dec_width': 56, 'fno_modes': (16, 8)},
     'tno': {'arch': 'tno', 'dec_width': 96},
     'unet': {'arch': 'unet', 'dec_width': 96},
+    'deeponet': {'arch': 'deeponet', 'dec_width': 96, 'n_sensors': 392,
+                 'branch_batch_norm': True, 'trunk_batch_norm': True},
+
+    # Neural Operators + Diffusion Models (Generative Operators) - Stage 1: prior-only training
+    'fno_dm': {'arch': 'genop-fno-diffusion', 'dec_width': 56, 'fno_modes': (16, 8), 'diff_steps': 20, 'training_stage': 1,
+               'load_pretrained_prior': True, 'prior_checkpoint_key': 'fno_tra'},
+    'tno_dm': {'arch': 'genop-tno-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1,
+               'load_pretrained_prior': True, 'prior_checkpoint_key': 'tno_tra'},
+    'unet_dm': {'arch': 'genop-unet-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1,
+                'load_pretrained_prior': True, 'prior_checkpoint_key': 'unet_tra'},
+    'deeponet_dm': {'arch': 'genop-deeponet-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1, 'n_sensors': 392,
+                    'load_pretrained_prior': True, 'prior_checkpoint_key': 'deeponet_tra',
+                    'branch_batch_norm': True, 'trunk_batch_norm': True},
+
+    # Legacy Deterministic
+    'resnet': {'arch': 'resnet', 'dec_width': 144},
+    'dil_resnet': {'arch': 'dil_resnet', 'dec_width': 144},
+    'latent_mgn': {'arch': 'skip', 'dec_width': 96, 'enc_width': 32, 'latent_size': 32,
+                   'requires_encoder': True, 'requires_latent': True, 'vae': False},
+
+    # Legacy Diffusion (Standalone)
+    'acdm': {'arch': 'diffusion', 'diff_steps': 100},
+    'refiner': {'arch': 'refiner', 'diff_steps': 4, 'refiner_std': 0.00001},
 }
+
+def create_model_params(config):
+    '''Create model parameters matching local_tra_verification.py'''
+    # Create encoder params if needed (for LatentMGN)
+    p_me = None
+    if config.get('requires_encoder'):
+        p_me = ModelParamsEncoder(
+            arch="skip",
+            pretrained=False,
+            encWidth=config.get('enc_width', 32),
+            latentSize=config.get('latent_size', 32)
+        )
+
+    # Create latent params if needed (for LatentMGN)
+    p_ml = None
+    if config.get('requires_latent'):
+        p_ml = ModelParamsLatent(
+            arch="transformerMGN",
+            pretrained=False,
+            width=1024,
+            layers=1,
+            dropout=0.0,
+            transTrainUnroll=True,
+            transTargetFull=False,
+            maxInputLen=30
+        )
+
+    # Create decoder params (required for all models)
+    p_md = ModelParamsDecoder(
+        arch=config['arch'],
+        pretrained=False,
+        decWidth=config.get('dec_width', 96),
+        fnoModes=config.get('fno_modes'),
+        diffSteps=config.get('diff_steps'),
+        diffSchedule=config.get('diff_schedule', 'linear'),
+        diffCondIntegration=config.get('diff_cond_integration', 'noisy'),
+        refinerStd=config.get('refiner_std'),
+        vae=config.get('vae', False),
+        n_sensors=config.get('n_sensors'),
+        training_stage=config.get('training_stage')
+    )
+
+    # Store DeepONet overrides in p_md for architecture matching
+    deeponet_overrides = {}
+    if 'deeponet' in config['arch'].lower():
+        deeponet_keys = ['branch_batch_norm', 'trunk_batch_norm', 'branch_layers', 'trunk_layers',
+                       'branch_activation', 'trunk_activation', 'branch_dropout', 'trunk_dropout']
+        for key in deeponet_keys:
+            if key in config:
+                setattr(p_md, key, config[key])
+                deeponet_overrides[key] = config[key]
+
+    return p_me, p_md, p_ml, deeponet_overrides
 
 def train_model(model_name, config):
     '''Train a single model on TRA data'''
@@ -260,6 +352,9 @@ def train_model(model_name, config):
     print(f"  🔄 {model_name.upper()}: Training...")
 
     try:
+        # Get sequence length for this model
+        seq_len = config.get('sequence_length', [2, 2])
+
         # Create dataset
         dataset = TurbulenceDataset(
             name=f"TRA_{model_name}",
@@ -267,18 +362,24 @@ def train_model(model_name, config):
             filterTop=TRA_CONFIG['filter_top'],
             filterSim=TRA_CONFIG['filter_sim'],
             filterFrame=TRA_CONFIG['filter_frame'],
-            sequenceLength=[[2, 2]],
+            sequenceLength=[seq_len],
             randSeqOffset=True,
             simFields=TRA_CONFIG['sim_fields'],
             simParams=TRA_CONFIG['sim_params'],
             printLevel="none"
         )
 
+        # DeepONet models with BatchNorm require batch_size >= 2
+        model_batch_size = BATCH_SIZE
+        if 'deeponet' in config['arch'].lower() and BATCH_SIZE < 2:
+            model_batch_size = 2
+            print(f"     Note: Using batch_size={model_batch_size} for DeepONet (BatchNorm requirement)")
+
         # Create params
         p_d = DataParams(
-            batch=BATCH_SIZE,
+            batch=model_batch_size,
             augmentations=["normalize"],
-            sequenceLength=[2, 2],
+            sequenceLength=seq_len,
             randSeqOffset=True,
             dataSize=[64, 32],
             dimension=2,
@@ -287,21 +388,30 @@ def train_model(model_name, config):
             normalizeMode=TRA_CONFIG['normalize_mode']
         )
 
-        p_t = TrainingParams(epochs=3, lr=0.0001)  # Just 3 epochs for quick verification
-        p_l = LossParams(recMSE=0.0, predMSE=1.0)
+        p_t = TrainingParams(epochs=3, lr=0.0001)
 
-        p_md = ModelParamsDecoder(
-            arch=config['arch'],
-            pretrained=False,
-            decWidth=config.get('dec_width', 96),
-            fnoModes=config.get('fno_modes'),
-            diffSteps=config.get('diff_steps'),
-            diffSchedule=config.get('diff_schedule', 'linear'),
-            refinerStd=config.get('refiner_std')
-        )
+        # Configure loss - TNO L2 loss can be enabled by adding: tno_lp_loss=1.0
+        p_l = LossParams(recMSE=0.0, predMSE=1.0)
+        # Optional: Enable TNO relative L2 loss
+        # p_l = LossParams(recMSE=0.0, predMSE=1.0, tno_lp_loss=1.0)
+
+        # Create model params using helper function
+        p_me, p_md, p_ml, deeponet_overrides = create_model_params(config)
+
+        # Handle pretrained prior loading for NO+DM models
+        pretrain_path = ""
+        if config.get('load_pretrained_prior') and config.get('prior_checkpoint_key'):
+            prior_checkpoint = progress_dir / 'checkpoints' / f"{config['prior_checkpoint_key']}.pt"
+            if prior_checkpoint.exists():
+                pretrain_path = str(prior_checkpoint)
+                print(f"     Loading pretrained prior from: {prior_checkpoint.name}")
+                p_md.pretrained = True
+            else:
+                print(f"     Warning: Pretrained prior not found: {prior_checkpoint.name}")
+                print(f"     Continuing with random initialization")
 
         # Create model
-        model = PredictionModel(p_d, p_t, p_l, None, p_md, None, "", useGPU=torch.cuda.is_available())
+        model = PredictionModel(p_d, p_t, p_l, p_me, p_md, p_ml, pretrain_path, useGPU=torch.cuda.is_available())
 
         # Apply transforms
         transforms = Transforms(p_d)
@@ -323,11 +433,18 @@ def train_model(model_name, config):
 
                 optimizer.zero_grad()
 
+                # Unpack batch
+                data = batch['data']
+                simParameters = batch['simParameters']
+
                 # Get model output
-                output = model(batch)
+                output = model(data, simParameters)
+
+                # Extract ground truth (target frames from data)
+                groundTruth = data
 
                 # Compute loss
-                loss = criterion(output, batch)
+                loss, lossParts, lossSeq = criterion(output, groundTruth, None, (None, None))
                 loss.backward()
                 optimizer.step()
 
@@ -336,11 +453,34 @@ def train_model(model_name, config):
             avg_loss = epoch_loss / min(5, len(train_loader))
             print(f"     Epoch {epoch+1}/{p_t.epochs}: Loss={avg_loss:.4f}")
 
-        # Save
+        # Save checkpoint with enhanced config for architecture reproduction
+        enhanced_config = config.copy()
+
+        # For DeepONet models, save the actual architecture config used
+        if 'deeponet' in config['arch'].lower():
+            enhanced_config.update(deeponet_overrides)
+
+        # For NO+DM models, also capture prior architecture details if available
+        if config.get('load_pretrained_prior') and config.get('prior_checkpoint_key'):
+            prior_checkpoint_path = progress_dir / 'checkpoints' / f"{config['prior_checkpoint_key']}.pt"
+            if prior_checkpoint_path.exists():
+                try:
+                    prior_checkpoint = torch.load(prior_checkpoint_path, map_location='cpu', weights_only=False)
+                    prior_config = prior_checkpoint.get('config', {})
+                    # Merge prior architecture details (e.g., DeepONet BatchNorm flags)
+                    arch_keys = ['branch_batch_norm', 'trunk_batch_norm', 'branch_layers', 'trunk_layers',
+                                'branch_activation', 'trunk_activation', 'branch_dropout', 'trunk_dropout',
+                                'fno_modes', 'n_sensors']
+                    for key in arch_keys:
+                        if key in prior_config and key not in enhanced_config:
+                            enhanced_config[key] = prior_config[key]
+                except Exception as e:
+                    print(f"     Warning: Could not load prior config: {e}")
+
         torch.save({
             'model_state_dict': model.state_dict(),
             'epoch': p_t.epochs,
-            'config': config
+            'config': enhanced_config
         }, checkpoint_path)
 
         progress['training'][checkpoint_key] = 'complete'

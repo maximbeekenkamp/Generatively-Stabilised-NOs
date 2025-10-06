@@ -49,7 +49,7 @@ class PredictionModel(nn.Module):
 
         if (self.p_me and self.p_me.pretrained) or (self.p_md and self.p_md.pretrained) or (self.p_ml and self.p_ml.pretrained):
             if pretrainPath:
-                loadedPretrainedWeightDict = torch.load(pretrainPath)
+                loadedPretrainedWeightDict = torch.load(pretrainPath, weights_only=False)
 
         # ENCODER
         if self.p_me:
@@ -155,10 +155,8 @@ class PredictionModel(nn.Module):
                 from .model_registry import ModelRegistry, parse_generative_operator_architecture
                 from .generative_operator_model import create_generative_operator_model
 
-                # Ensure generative operators are initialized
-                initialize_generative_operators()
-
                 # Parse architecture to determine prior and corrector types
+                # Note: Auto-initialization in genop_init.py already registers all models
                 try:
                     if self.p_md.arch.startswith("genop"):
                         prior_type, corrector_type = parse_generative_operator_architecture(self.p_md.arch)
@@ -186,6 +184,7 @@ class PredictionModel(nn.Module):
                         corrector_name=corrector_type,
                         p_md=self.p_md,
                         p_d=self.p_d,
+                        pretrain_checkpoint=pretrainPath,
                         enable_dcar=True,
                         memory_efficient=True
                     )
@@ -249,10 +248,24 @@ class PredictionModel(nn.Module):
 
             # load pretraining weights
             if pretrainPath and self.p_md.pretrained:
-                if self.p_md.arch in ["skip+finetune-ddpm", "skip+finetune-ddim", "skip+hybrid-ddpm", "skip+hybrid-ddim"]:
+                # Skip loading for GenerativeOperatorModel - it loads its prior during creation
+                if hasattr(self.modelDecoder, '__class__') and 'GenerativeOperatorModel' in str(type(self.modelDecoder)):
+                    # GenerativeOperatorModel already loaded pretrained prior via create_generative_operator_model
+                    pass
+                elif self.p_md.arch in ["skip+finetune-ddpm", "skip+finetune-ddim", "skip+hybrid-ddpm", "skip+hybrid-ddim"]:
                     self.modelDecoder[0].load_state_dict(loadedPretrainedWeightDict["stateDictDecoder"])
                 else:
-                    self.modelDecoder.load_state_dict(loadedPretrainedWeightDict["stateDictDecoder"])
+                    # Handle both old and new checkpoint formats
+                    if "stateDictDecoder" in loadedPretrainedWeightDict:
+                        # Old format: separate stateDictDecoder key
+                        state_dict = loadedPretrainedWeightDict["stateDictDecoder"]
+                    elif "model_state_dict" in loadedPretrainedWeightDict:
+                        # New format: model_state_dict from Trainer.trainingStep
+                        state_dict = loadedPretrainedWeightDict["model_state_dict"]
+                    else:
+                        raise KeyError("Checkpoint missing both 'stateDictDecoder' and 'model_state_dict' keys")
+
+                    self.modelDecoder.load_state_dict(state_dict, strict=False)
 
             # freeze weights
             if self.p_md.frozen:
@@ -324,6 +337,7 @@ class PredictionModel(nn.Module):
                 "fno", "fno+Prev", "fno+2Prev", "fno+3Prev",
                 "dfp", "dfp+Prev", "dfp+2Prev", "dfp+3Prev",
                 "tno", "tno+Prev", "tno+2Prev", "tno+3Prev",
+                "deeponet", "deeponet+Prev", "deeponet+2Prev", "deeponet+3Prev",
                 "refiner",
                 "direct-ddpm", "direct-ddim", "direct-ddpm+First", "direct-ddim+First",
                 "direct-ddpm+Prev", "direct-ddim+Prev", "direct-ddpm+2Prev", "direct-ddim+2Prev",
@@ -333,6 +347,7 @@ class PredictionModel(nn.Module):
                 "genop-fno-diffusion", "genop-fno-diffusion+Prev", "genop-fno-diffusion+2Prev", "genop-fno-diffusion+3Prev",
                 "genop-tno-diffusion", "genop-tno-diffusion+Prev", "genop-tno-diffusion+2Prev", "genop-tno-diffusion+3Prev",
                 "genop-unet-diffusion", "genop-unet-diffusion+Prev", "genop-unet-diffusion+2Prev", "genop-unet-diffusion+3Prev",
+                "genop-deeponet-diffusion", "genop-deeponet-diffusion+Prev", "genop-deeponet-diffusion+2Prev", "genop-deeponet-diffusion+3Prev",
                 "nodm", "nodm+Prev", "nodm+2Prev", "nodm+3Prev"]):
 
             latentSpace = torch.zeros(d.shape[0], d.shape[1], self.p_me.latentSize)
@@ -387,6 +402,14 @@ class PredictionModel(nn.Module):
                 else:
                     # Single-step or bundled prediction for training
                     prediction = self.forwardTNO(d)
+                return prediction, None, (None, None)
+
+            elif isinstance(self.modelDecoder, DeepONetWrapper):
+                # DeepONet forward path
+                if stepsLong > 0 and (not self.training):
+                    prediction = self.forwardDirectLongGPUEfficient(d, steps=stepsLong)
+                else:
+                    prediction = self.forwardDirect(d)
                 return prediction, None, (None, None)
 
             elif hasattr(self.modelDecoder, '__class__') and 'GenerativeOperatorModel' in str(type(self.modelDecoder)):

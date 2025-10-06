@@ -65,8 +65,19 @@ class DeepONetConfig:
             self.trunk_layers = [64, 128, self.latent_dim]
 
     @classmethod
-    def from_params(cls, p_md: ModelParamsDecoder, p_d: DataParams) -> 'DeepONetConfig':
-        """Create configuration from existing parameter system."""
+    def from_params(cls, p_md: ModelParamsDecoder, p_d: DataParams, **config_overrides) -> 'DeepONetConfig':
+        """
+        Create configuration from existing parameter system.
+
+        Args:
+            p_md: Model parameter decoder
+            p_d: Data parameters
+            **config_overrides: Explicit config overrides (e.g., from checkpoint)
+                              Prioritized over heuristics.
+
+        Returns:
+            DeepONetConfig instance
+        """
 
         # Map existing parameters to DeepONet configuration
         config = cls()
@@ -77,11 +88,32 @@ class DeepONetConfig:
             config.branch_layers = [p_md.decWidth//2, p_md.decWidth, p_md.decWidth]
             config.trunk_layers = [p_md.decWidth//4, p_md.decWidth//2, p_md.decWidth]
 
-        # Determine sensor count based on data size
-        if hasattr(p_d, 'dataSize') and len(p_d.dataSize) >= 2:
+        # Determine sensor count - prioritize explicit n_sensors from p_md
+        if hasattr(p_md, 'n_sensors') and p_md.n_sensors is not None:
+            config.n_sensors = p_md.n_sensors
+        elif hasattr(p_d, 'dataSize') and len(p_d.dataSize) >= 2:
             H, W = p_d.dataSize[-2], p_d.dataSize[-1]
             # Use roughly 1-5% of spatial points as sensors
             config.n_sensors = min(max(50, (H * W) // 20), 1000)
+
+        # Check for DeepONet config attributes stored in p_md (from checkpoint)
+        deeponet_attrs = ['branch_batch_norm', 'trunk_batch_norm', 'branch_layers', 'trunk_layers',
+                         'branch_activation', 'trunk_activation', 'branch_dropout', 'trunk_dropout']
+        for attr in deeponet_attrs:
+            if hasattr(p_md, attr):
+                config_overrides[attr] = getattr(p_md, attr)
+
+        # Apply batch norm heuristic if not explicitly overridden
+        if 'branch_batch_norm' not in config_overrides and 'trunk_batch_norm' not in config_overrides:
+            # Disable batch norm if batch size is 1 (CPU training)
+            if hasattr(p_d, 'batch') and p_d.batch == 1:
+                config.branch_batch_norm = False
+                config.trunk_batch_norm = False
+
+        # Apply explicit overrides from checkpoint or config
+        for key, value in config_overrides.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
 
         return config
 
