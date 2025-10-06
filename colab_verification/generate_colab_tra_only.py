@@ -68,7 +68,7 @@ notebook["cells"].append(create_cell("markdown", """# TRA-Only Colab Verificatio
 - Tests complete pipeline: download → train → checkpoints
 - Verifies all model architectures work
 
-**Expected Runtime**: ~50 minutes on T4 GPU (13 models × 3 epochs)"""))
+**Expected Runtime**: ~4-6 hours on T4 GPU (13 models × 50 epochs)"""))
 
 # Cell 0: Clean Slate
 notebook["cells"].append(create_cell("markdown", """## Cell 0: Clean Slate (Optional)
@@ -218,9 +218,9 @@ Training ALL 13 models on TRA dataset:
 - **Legacy Deterministic (3)**: ResNet, Dil-ResNet, Latent-MGN
 - **Legacy Diffusion (2)**: ACDM, Refiner
 
-Each model trains for 3 epochs (5 batches per epoch for quick verification)
+Each model trains for 50 epochs on full dataset with batch size 4.
 
-**Total**: 13 models × 3 epochs ≈ 50 minutes on T4 GPU"""))
+**Total**: 13 models × 50 epochs ≈ 4-6 hours on T4 GPU"""))
 
 notebook["cells"].append(create_cell("code", """# Cell 4: Train Models (TRA Only)
 import sys
@@ -245,14 +245,18 @@ print("="*60)
 print("📊 TRAINING MODELS (TRA ONLY)")
 print("="*60)
 
-# TRA configuration
+# GPU-friendly training configuration
+EPOCHS = 50  # More epochs for GPU training (vs 3 for local CPU)
+BATCH_SIZE = 4  # Higher batch size for GPU (vs 1 for local CPU)
+
+# TRA configuration (matches local_tra_verification.py)
 TRA_CONFIG = {
     'filter_top': ['128_small_tra'],
     'filter_sim': [(0, 1)],
-    'filter_frame': [(0, 100)],
+    'filter_frame': [(0, 1000)],  # Full frame range
     'sim_fields': ['dens', 'pres'],
-    'sim_params': ['rey', 'mach'],
-    'normalize_mode': 'traMixed'
+    'sim_params': ['mach'],  # CRITICAL: Only 'mach', not 'rey'! Affects channel count.
+    'normalize_mode': 'machMixed'  # Autoreg uses machMixed, not traMixed
 }
 
 # Models to test (13 models matching local_tra_verification.py)
@@ -282,8 +286,10 @@ MODELS = {
                    'requires_encoder': True, 'requires_latent': True, 'vae': False},
 
     # Legacy Diffusion (Standalone)
-    'acdm': {'arch': 'diffusion', 'diff_steps': 100},
-    'refiner': {'arch': 'refiner', 'diff_steps': 4, 'refiner_std': 0.00001},
+    'acdm': {'arch': 'direct-ddpm+Prev', 'diff_steps': 20, 'sequence_length': [3, 2],
+             'is_diffusion_model': True, 'diff_cond_integration': 'noisy'},
+    'refiner': {'arch': 'refiner', 'diff_steps': 4, 'refiner_std': 0.000001,
+                'is_diffusion_model': True, 'dec_width': 96},
 }
 
 def create_model_params(config):
@@ -381,14 +387,15 @@ def train_model(model_name, config):
             augmentations=["normalize"],
             sequenceLength=seq_len,
             randSeqOffset=True,
-            dataSize=[64, 32],
+            dataSize=[128, 64],  # Match autoreg reference
             dimension=2,
             simFields=TRA_CONFIG['sim_fields'],
             simParams=TRA_CONFIG['sim_params'],
             normalizeMode=TRA_CONFIG['normalize_mode']
         )
 
-        p_t = TrainingParams(epochs=3, lr=0.0001)
+        # GPU-friendly training parameters: higher epochs and batch size
+        p_t = TrainingParams(epochs=EPOCHS, lr=0.0001)
 
         # Configure loss - TNO L2 loss can be enabled by adding: tno_lp_loss=1.0
         p_l = LossParams(recMSE=0.0, predMSE=1.0)
@@ -417,41 +424,53 @@ def train_model(model_name, config):
         transforms = Transforms(p_d)
         dataset.transform = transforms
 
-        # Train
-        train_loader = DataLoader(dataset, batch_size=p_d.batch, shuffle=True, drop_last=True, num_workers=0)
+        # Create data loader
+        train_loader = DataLoader(dataset, batch_size=p_d.batch, shuffle=True,
+                                  drop_last=True, num_workers=0)
 
-        model.train()
+        # Setup training using Trainer class from codebase
+        from src.core.training.trainer import Trainer
+        from src.core.training.loss_history import LossHistory
+
+        # Try to import SummaryWriter, fall back to dummy if tensorboard has issues
+        try:
+            from torch.utils.tensorboard import SummaryWriter
+            writer = SummaryWriter(log_dir=str(progress_dir / 'logs' / model_name))
+        except (ImportError, TypeError) as e:
+            class DummyWriter:
+                def add_scalar(self, *args, **kwargs): pass
+                def flush(self): pass
+                def close(self): pass
+            writer = DummyWriter()
+
+        # Setup optimizer and scheduler
         optimizer = torch.optim.Adam(model.parameters(), lr=p_t.lr)
+        lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=p_t.expLrGamma)
         criterion = PredictionLoss(p_l, p_d.dimension, p_d.simFields, useGPU=torch.cuda.is_available())
 
-        print(f"     Training {p_t.epochs} epochs on {len(dataset)} samples...")
+        # Create training history tracker
+        train_history = LossHistory(
+            "_train", "Training", writer, len(train_loader),
+            0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields
+        )
+
+        # Create Trainer with checkpoint support
+        trainer = Trainer(
+            model, train_loader, optimizer, lr_scheduler, criterion,
+            train_history, writer, p_d, p_t,
+            checkpoint_path=str(checkpoint_path),
+            checkpoint_frequency=max(1, p_t.epochs // 5)  # Save 5 checkpoints during training
+        )
+
+        print(f"     Training {p_t.epochs} epochs on {len(dataset)} samples using Trainer class...")
+
+        # Training loop using Trainer.trainingStep()
         for epoch in range(p_t.epochs):
-            epoch_loss = 0
-            for i, batch in enumerate(train_loader):
-                if i >= 5:  # Just 5 batches per epoch for quick verification
-                    break
+            trainer.trainingStep(epoch)
 
-                optimizer.zero_grad()
-
-                # Unpack batch
-                data = batch['data']
-                simParameters = batch['simParameters']
-
-                # Get model output
-                output = model(data, simParameters)
-
-                # Extract ground truth (target frames from data)
-                groundTruth = data
-
-                # Compute loss
-                loss, lossParts, lossSeq = criterion(output, groundTruth, None, (None, None))
-                loss.backward()
-                optimizer.step()
-
-                epoch_loss += loss.item()
-
-            avg_loss = epoch_loss / min(5, len(train_loader))
-            print(f"     Epoch {epoch+1}/{p_t.epochs}: Loss={avg_loss:.4f}")
+            # Print progress
+            if (epoch + 1) % max(1, p_t.epochs // 10) == 0 or epoch == 0:
+                print(f"     Epoch {epoch+1}/{p_t.epochs} complete")
 
         # Save checkpoint with enhanced config for architecture reproduction
         enhanced_config = config.copy()
