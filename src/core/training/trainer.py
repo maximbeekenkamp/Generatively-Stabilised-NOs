@@ -360,6 +360,7 @@ class Tester(object):
                 TextColumn("•"),
                 TextColumn("{task.completed}/{task.total} batches"),
                 TimeElapsedColumn(),
+                transient=True  # Progress bar disappears after completion
             ) as progress:
                 task = progress.add_task(description, total=len(self.testLoader))
 

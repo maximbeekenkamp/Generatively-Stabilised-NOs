@@ -292,8 +292,17 @@ MODELS = {
                 'is_diffusion_model': True, 'dec_width': 96},
 }
 
-def create_model_params(config):
-    '''Create model parameters matching local_tra_verification.py'''
+def create_model_params(config, checkpoint_config=None):
+    '''Create model parameters matching local_tra_verification.py
+
+    Args:
+        config: Model configuration dictionary
+        checkpoint_config: Optional config from saved checkpoint for architecture matching
+    '''
+    # Merge checkpoint config if provided (for exact architecture matching during sampling)
+    if checkpoint_config:
+        config = {**config, **checkpoint_config}
+
     # Create encoder params if needed (for LatentMGN)
     p_me = None
     if config.get('requires_encoder'):
