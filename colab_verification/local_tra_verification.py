@@ -455,7 +455,8 @@ def train_model(model_name: str, config: Dict[str, Any], args, progress_dir: Pat
         train_history = LossHistory(
             "_train", "Training", writer, len(train_loader),
             0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields,
-            use_rich_progress=True, total_epochs=p_t.epochs
+            use_rich_progress=True, total_epochs=p_t.epochs,
+            model_name=model_name.upper(), loss_params=p_l
         )
 
         # Create Trainer with checkpoint support
@@ -634,7 +635,7 @@ def sample_model(model_name: str, config: Dict[str, Any], args, progress_dir: Pa
 
         # Generate predictions
         print(f"     Generating predictions on {len(test_dataset)} test samples...")
-        predictions = tester.generatePredictions(output_path=str(sample_output_path))
+        predictions = tester.generatePredictions(output_path=str(sample_output_path), model_name=model_name.upper())
 
         # Save ground truth data for plotting (only once, not per model)
         sample_dir = progress_dir / 'sampling'
@@ -975,11 +976,38 @@ def main():
         print("\n" + "=" * 60)
         print("🔮 SAMPLING PHASE")
         print("=" * 60)
+
+        # Try to import Rich for progress bar
+        try:
+            from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+            RICH_AVAILABLE = True
+        except ImportError:
+            RICH_AVAILABLE = False
+
         sample_count = 0
-        for model_name in selected_models:
-            config = MODELS[model_name]
-            if sample_model(model_name, config, args, progress_dir, progress_file, progress):
-                sample_count += 1
+        if RICH_AVAILABLE:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TextColumn("{task.completed}/{task.total} models"),
+                TimeElapsedColumn(),
+            ) as progress_bar:
+                task = progress_bar.add_task("Sampling models", total=len(selected_models))
+
+                for model_name in selected_models:
+                    config = MODELS[model_name]
+                    if sample_model(model_name, config, args, progress_dir, progress_file, progress):
+                        sample_count += 1
+                    progress_bar.update(task, advance=1)
+        else:
+            for model_name in selected_models:
+                config = MODELS[model_name]
+                if sample_model(model_name, config, args, progress_dir, progress_file, progress):
+                    sample_count += 1
+
         print(f"\n✅ Sampling complete: {sample_count}/{len(selected_models)} models")
 
         # Display comparison table after sampling

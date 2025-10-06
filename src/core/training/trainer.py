@@ -315,7 +315,7 @@ class Tester(object):
             self.testHistory.prepareAndClearForNextEpoch()
 
 
-    def generatePredictions(self, output_path:str=None):
+    def generatePredictions(self, output_path:str=None, model_name:str=None, show_progress:bool=True):
         """
         Generate predictions from the model and optionally save to .npz file.
 
@@ -324,6 +324,8 @@ class Tester(object):
 
         Args:
             output_path: Path to save .npz file. If None, just returns predictions.
+            model_name: Name of the model (for progress bar display).
+            show_progress: Whether to show progress bar (default True).
 
         Returns:
             predictions: numpy array of shape [num_sequences, timesteps, channels, H, W]
@@ -333,33 +335,71 @@ class Tester(object):
 
         assert (len(self.testLoader) > 0), "Not enough samples for prediction generation!"
 
-        logging.info(f"Generating predictions with {len(self.testLoader)} batches...")
+        # Try to import Rich progress bar
+        try:
+            from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+            RICH_AVAILABLE = True
+        except ImportError:
+            RICH_AVAILABLE = False
+            show_progress = False
+
+        if not show_progress:
+            logging.info(f"Generating predictions with {len(self.testLoader)} batches...")
 
         self.model.eval()
         all_predictions = []
 
-        with torch.no_grad():
-            for s, sample in enumerate(self.testLoader, 0):
-                device = "cuda" if self.model.useGPU else "cpu"
-                data = sample["data"].to(device)
-                simParameters = sample["simParameters"].to(device) if type(sample["simParameters"]) is not dict else None
+        # Use progress bar if available and requested
+        if show_progress and RICH_AVAILABLE:
+            description = f"[{model_name}] Sampling" if model_name else "Sampling"
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold blue]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TextColumn("•"),
+                TextColumn("{task.completed}/{task.total} batches"),
+                TimeElapsedColumn(),
+            ) as progress:
+                task = progress.add_task(description, total=len(self.testLoader))
 
-                # Generate prediction
-                prediction, _, _ = self.model(data, simParameters, useLatent=True)
+                with torch.no_grad():
+                    for s, sample in enumerate(self.testLoader, 0):
+                        device = "cuda" if self.model.useGPU else "cpu"
+                        data = sample["data"].to(device)
+                        simParameters = sample["simParameters"].to(device) if type(sample["simParameters"]) is not dict else None
 
-                # Move to CPU and convert to numpy
-                # prediction shape: [B, T, C, H, W]
-                pred_np = prediction.cpu().numpy()
-                all_predictions.append(pred_np)
+                        # Generate prediction
+                        prediction, _, _ = self.model(data, simParameters, useLatent=True)
 
-                if (s + 1) % 10 == 0:
-                    logging.info(f"  Processed {s+1}/{len(self.testLoader)} batches")
+                        # Move to CPU and convert to numpy
+                        pred_np = prediction.cpu().numpy()
+                        all_predictions.append(pred_np)
+
+                        progress.update(task, advance=1)
+        else:
+            with torch.no_grad():
+                for s, sample in enumerate(self.testLoader, 0):
+                    device = "cuda" if self.model.useGPU else "cpu"
+                    data = sample["data"].to(device)
+                    simParameters = sample["simParameters"].to(device) if type(sample["simParameters"]) is not dict else None
+
+                    # Generate prediction
+                    prediction, _, _ = self.model(data, simParameters, useLatent=True)
+
+                    # Move to CPU and convert to numpy
+                    pred_np = prediction.cpu().numpy()
+                    all_predictions.append(pred_np)
+
+                    if (s + 1) % 10 == 0:
+                        logging.info(f"  Processed {s+1}/{len(self.testLoader)} batches")
 
         # Concatenate all batches along batch dimension
         # Result: [total_sequences, timesteps, channels, H, W]
         predictions = np.concatenate(all_predictions, axis=0)
 
-        logging.info(f"Generated predictions with shape: {predictions.shape}")
+        if not show_progress:
+            logging.info(f"Generated predictions with shape: {predictions.shape}")
 
         # Save to .npz if path provided
         if output_path is not None:

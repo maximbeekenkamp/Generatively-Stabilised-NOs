@@ -40,7 +40,8 @@ class LossHistory(object):
 
     def __init__(self, mode:str, modeLong:str, writer:SummaryWriter, dataLoaderLength:int,
                     epoch:int, epochStep:int, printInterval:int=0, logInterval:int=1, simFields:List[str]=[],
-                    use_rich_progress:bool=False, total_epochs:Optional[int]=None):
+                    use_rich_progress:bool=False, total_epochs:Optional[int]=None, model_name:Optional[str]=None,
+                    loss_params:Optional[object]=None):
 
         self.mode = mode
         self.modeLong = modeLong
@@ -53,6 +54,8 @@ class LossHistory(object):
         self.simFields = simFields
         self.use_rich_progress = use_rich_progress and RICH_AVAILABLE
         self.total_epochs = total_epochs
+        self.model_name = model_name
+        self.loss_params = loss_params
 
         # Initialize Rich progress bar if requested
         self.progress = None
@@ -73,8 +76,9 @@ class LossHistory(object):
             # If total_epochs > 5, create a single progress bar for all training
             if self.total_epochs is not None and self.total_epochs > 5:
                 total_batches = self.total_epochs * self.dataLoaderLength
+                description = f"[{self.model_name}] {self.modeLong}" if self.model_name else f"{self.modeLong}"
                 self.task_id = self.progress.add_task(
-                    f"{self.modeLong}",
+                    description,
                     total=total_batches,
                     loss_text="Loss: N/A"
                 )
@@ -116,8 +120,9 @@ class LossHistory(object):
             else:
                 # Per-epoch progress bars
                 if sample == 0:
+                    description = f"[{self.model_name}] Epoch {self.epoch+1}" if self.model_name else f"Epoch {self.epoch+1}"
                     self.task_id = self.progress.add_task(
-                        f"Epoch {self.epoch+1}",
+                        description,
                         total=self.dataLoaderLength,
                         loss_text=f"Loss: {loss:.4f}"
                     )
@@ -169,7 +174,23 @@ class LossHistory(object):
             if name == "lossFull":
                 loss = part
             else:
-                partStr += "%s %1.3f " % (name.replace("loss", ""), part)
+                # Filter out losses that are not in use (weight == 0)
+                should_include = True
+                if self.loss_params is not None:
+                    # Map loss name to loss_params attribute
+                    if name == "lossRecMSE" and self.loss_params.recMSE <= 0:
+                        should_include = False
+                    elif name == "lossRecLSIM" and self.loss_params.recLSIM <= 0:
+                        should_include = False
+                    elif name == "lossPredMSE" and self.loss_params.predMSE <= 0:
+                        should_include = False
+                    elif name == "lossPredLSIM" and self.loss_params.predLSIM <= 0:
+                        should_include = False
+                    elif name == "lossTNO" and self.loss_params.tno_lp_loss <= 0:
+                        should_include = False
+
+                if should_include:
+                    partStr += "%s %1.3f " % (name.replace("loss", ""), part)
 
             # accuracy metrics
             accName = name.replace("lossRec", "r")

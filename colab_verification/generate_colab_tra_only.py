@@ -457,7 +457,8 @@ def train_model(model_name, config):
         train_history = LossHistory(
             "_train", "Training", writer, len(train_loader),
             0, 1, printInterval=1, logInterval=1, simFields=p_d.simFields,
-            use_rich_progress=True, total_epochs=p_t.epochs
+            use_rich_progress=True, total_epochs=p_t.epochs,
+            model_name=model_name.upper(), loss_params=p_l
         )
 
         # Create Trainer with checkpoint support
@@ -540,8 +541,253 @@ print(f"\\n{'='*60}")
 print(f"✅ Training Complete: {success_count}/{len(MODELS)} models trained")
 print(f"{'='*60}")"""))
 
-# Cell 5: Summary
-notebook["cells"].append(create_cell("code", """# Cell 5: Summary
+# Cell 5: Sampling Phase
+notebook["cells"].append(create_cell("code", """# Cell 5: Sampling Phase - Generate Predictions
+
+def sample_model(model_name: str, config: dict):
+    \"\"\"Generate predictions from a trained model\"\"\"
+    checkpoint_key = f"{model_name}_tra"
+    checkpoint_path = progress_dir / 'checkpoints' / f"{checkpoint_key}.pt"
+    sample_output_path = progress_dir / 'sampling' / f"{checkpoint_key}.npz"
+
+    # Check if model is trained
+    if not checkpoint_path.exists():
+        print(f"  ⚠️  {model_name.upper()}: No checkpoint found, skipping sampling")
+        return False
+
+    # Check if already sampled
+    if progress.get('sampling', {}).get(checkpoint_key) == 'complete' and sample_output_path.exists():
+        print(f"  ✅ {model_name.upper()}: Already sampled")
+        return True
+
+    print(f"  🔄 {model_name.upper()}: Generating predictions...")
+
+    try:
+        # Create test dataset
+        test_dataset = TurbulenceDataset(
+            name=f"TRA_test_{model_name}",
+            dataDirs=["data"],
+            filterTop=TRA_CONFIG['filter_top'],
+            filterSim=[(0, 3)],  # Different sims for testing
+            filterFrame=[(500, 750)],  # Different frames for testing
+            sequenceLength=[[60, 2]],
+            randSeqOffset=False,
+            simFields=TRA_CONFIG['sim_fields'],
+            simParams=TRA_CONFIG['sim_params'],
+            printLevel="none"
+        )
+
+        # Create params
+        p_d = DataParams(
+            batch=1,
+            augmentations=["normalize"],
+            sequenceLength=[60, 2],
+            randSeqOffset=False,
+            dataSize=[128, 64],
+            dimension=2,
+            simFields=TRA_CONFIG['sim_fields'],
+            simParams=TRA_CONFIG['sim_params'],
+            normalizeMode=TRA_CONFIG['normalize_mode']
+        )
+
+        p_t = TrainingParams(epochs=1, lr=0.0001)
+        p_l = LossParams(recMSE=0.0, predMSE=1.0)
+
+        # Load checkpoint
+        checkpoint = torch.load(checkpoint_path, map_location='cuda' if torch.cuda.is_available() else 'cpu', weights_only=False)
+        checkpoint_config = checkpoint.get('config', {})
+
+        # Create model
+        p_me, p_md, p_ml, deeponet_overrides = create_model_params(config, checkpoint_config)
+        model = PredictionModel(p_d, p_t, p_l, p_me, p_md, p_ml, "", useGPU=torch.cuda.is_available())
+
+        # Load weights
+        model.load_state_dict(checkpoint['model_state_dict'], strict=False)
+        print(f"     Loaded checkpoint from epoch {checkpoint.get('epoch', '?')}")
+
+        # Create test loader
+        transforms = Transforms(p_d)
+        test_dataset.transform = transforms
+        test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
+
+        # Create Tester
+        from src.core.training.trainer import Tester
+
+        class DummyWriter:
+            def add_scalar(self, *args, **kwargs): pass
+            def add_image(self, *args, **kwargs): pass
+            def flush(self, *args, **kwargs): pass
+            def close(self): pass
+        writer = DummyWriter()
+
+        criterion = PredictionLoss(p_l, p_d.dimension, p_d.simFields, useGPU=torch.cuda.is_available())
+        test_history = LossHistory(
+            "_test", "Testing", writer, len(test_loader),
+            0, 1, printInterval=0, logInterval=0, simFields=p_d.simFields
+        )
+
+        tester = Tester(model, test_loader, criterion, test_history, p_t)
+
+        # Generate predictions
+        print(f"     Generating predictions on {len(test_dataset)} test samples...")
+        predictions = tester.generatePredictions(output_path=str(sample_output_path), model_name=model_name.upper())
+
+        # Save ground truth (only once)
+        ground_truth_path = progress_dir / 'sampling' / 'groundTruth.dict'
+        if not ground_truth_path.exists():
+            print(f"     Saving ground truth data...")
+            all_ground_truth = []
+            with torch.no_grad():
+                for sample in test_loader:
+                    all_ground_truth.append(sample["data"])
+            ground_truth_tensor = torch.cat(all_ground_truth, dim=0)
+            torch.save({"data": ground_truth_tensor}, ground_truth_path)
+
+        # Update progress
+        if 'sampling' not in progress:
+            progress['sampling'] = {}
+        progress['sampling'][checkpoint_key] = 'complete'
+        with open(progress_file, 'w') as f:
+            json.dump(progress, f, indent=2)
+
+        print(f"     ✅ Complete! Shape: {predictions.shape}")
+
+        # Cleanup
+        del model, test_dataset, test_loader
+        torch.cuda.empty_cache()
+
+        return True
+
+    except Exception as e:
+        print(f"     ❌ Failed: {str(e)[:200]}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+# Sample all models
+print("\\n" + "="*60)
+print("🔮 SAMPLING PHASE")
+print("="*60)
+
+sample_count = 0
+for model_name in MODELS.keys():
+    config = MODELS[model_name]
+    if sample_model(model_name, config):
+        sample_count += 1
+
+print(f"\\n✅ Sampling complete: {sample_count}/{len(MODELS)} models")"""))
+
+# Cell 6: Plotting Phase
+notebook["cells"].append(create_cell("code", """# Cell 6: Plotting Phase - Generate Comparison Plots
+
+import matplotlib.pyplot as plt
+import numpy as np
+from pathlib import Path
+
+print("\\n" + "="*60)
+print("📊 PLOTTING PHASE")
+print("="*60)
+
+# Helper function to plot predictions vs ground truth
+def plot_comparison(model_name: str, time_step: int = 30):
+    \"\"\"Plot prediction vs ground truth for a specific model\"\"\"
+    checkpoint_key = f"{model_name}_tra"
+    sample_path = progress_dir / 'sampling' / f"{checkpoint_key}.npz"
+    gt_path = progress_dir / 'sampling' / 'groundTruth.dict'
+
+    if not sample_path.exists() or not gt_path.exists():
+        print(f"  ⚠️  {model_name.upper()}: Missing data, skipping plot")
+        return False
+
+    try:
+        # Load data
+        predictions = np.load(sample_path)['arr_0']  # [N, T, C, H, W]
+        ground_truth = torch.load(gt_path)['data'].numpy()  # [N, T, C, H, W]
+
+        # Select first sequence and specific time step
+        pred = predictions[0, time_step, :2]  # [C, H, W] - velocity fields only
+        gt = ground_truth[0, time_step, :2]
+
+        # Create figure
+        fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+        fig.suptitle(f'{model_name.upper()} - Time Step {time_step}', fontsize=16)
+
+        # Velocity X
+        im0 = axes[0, 0].imshow(gt[0], cmap='RdBu_r', aspect='auto')
+        axes[0, 0].set_title('Ground Truth - Velocity X')
+        axes[0, 0].axis('off')
+        plt.colorbar(im0, ax=axes[0, 0])
+
+        im1 = axes[1, 0].imshow(pred[0], cmap='RdBu_r', aspect='auto')
+        axes[1, 0].set_title('Prediction - Velocity X')
+        axes[1, 0].axis('off')
+        plt.colorbar(im1, ax=axes[1, 0])
+
+        # Velocity Y
+        im2 = axes[0, 1].imshow(gt[1], cmap='RdBu_r', aspect='auto')
+        axes[0, 1].set_title('Ground Truth - Velocity Y')
+        axes[0, 1].axis('off')
+        plt.colorbar(im2, ax=axes[0, 1])
+
+        im3 = axes[1, 1].imshow(pred[1], cmap='RdBu_r', aspect='auto')
+        axes[1, 1].set_title('Prediction - Velocity Y')
+        axes[1, 1].axis('off')
+        plt.colorbar(im3, ax=axes[1, 1])
+
+        # Error maps
+        error_x = np.abs(gt[0] - pred[0])
+        error_y = np.abs(gt[1] - pred[1])
+
+        im4 = axes[0, 2].imshow(error_x, cmap='hot', aspect='auto')
+        axes[0, 2].set_title('Absolute Error - Velocity X')
+        axes[0, 2].axis('off')
+        plt.colorbar(im4, ax=axes[0, 2])
+
+        im5 = axes[1, 2].imshow(error_y, cmap='hot', aspect='auto')
+        axes[1, 2].set_title('Absolute Error - Velocity Y')
+        axes[1, 2].axis('off')
+        plt.colorbar(im5, ax=axes[1, 2])
+
+        plt.tight_layout()
+
+        # Save plot
+        plot_dir = progress_dir / 'plots'
+        plot_dir.mkdir(exist_ok=True)
+        plot_path = plot_dir / f'{checkpoint_key}_comparison.png'
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.show()
+
+        print(f"  ✅ {model_name.upper()}: Plot saved to {plot_path}")
+        return True
+
+    except Exception as e:
+        print(f"  ❌ {model_name.upper()}: Plotting failed - {str(e)[:100]}")
+        return False
+
+# Plot all models with progress bar
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+
+plot_count = 0
+with Progress(
+    SpinnerColumn(),
+    TextColumn("[bold blue]{task.description}"),
+    BarColumn(),
+    TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+    TextColumn("•"),
+    TextColumn("{task.completed}/{task.total} models"),
+    TimeElapsedColumn(),
+) as progress:
+    task = progress.add_task("Generating plots", total=len(MODELS))
+
+    for model_name in MODELS.keys():
+        if plot_comparison(model_name):
+            plot_count += 1
+        progress.update(task, advance=1)
+
+print(f"\\n✅ Plotting complete: {plot_count}/{len(MODELS)} models")"""))
+
+# Cell 7: Summary
+notebook["cells"].append(create_cell("code", """# Cell 7: Summary
 print("="*60)
 print("📊 VERIFICATION SUMMARY")
 print("="*60)
@@ -551,15 +797,25 @@ with open(progress_file, 'r') as f:
 
 training_complete = sum(1 for v in progress.get('training', {}).values() if v == 'complete')
 training_failed = sum(1 for v in progress.get('training', {}).values() if v == 'failed')
+sampling_complete = sum(1 for v in progress.get('sampling', {}).values() if v == 'complete')
 
 print(f"\\nTraining: {training_complete} complete, {training_failed} failed")
-print(f"\\nResults:")
+print(f"Sampling: {sampling_complete} complete")
+
+print(f"\\nTraining Results:")
 for key, status in progress.get('training', {}).items():
     symbol = '✅' if status == 'complete' else '❌'
     print(f"  {symbol} {key}")
 
-if training_complete > 0:
-    print(f"\\n🎉 SUCCESS! Core training pipeline verified on real TRA data.")
+print(f"\\nSampling Results:")
+for key, status in progress.get('sampling', {}).items():
+    symbol = '✅' if status == 'complete' else '❌'
+    print(f"  {symbol} {key}")
+
+if training_complete > 0 and sampling_complete > 0:
+    print(f"\\n🎉 SUCCESS! Full pipeline verified: Training → Sampling → Plotting")
+elif training_complete > 0:
+    print(f"\\n✅ Training complete. Run sampling and plotting cells to generate visualizations.")
 else:
     print(f"\\n⚠️  No models completed successfully.")
 
