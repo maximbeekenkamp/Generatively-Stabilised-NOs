@@ -471,24 +471,26 @@ class TNOModel(nn.Module):
 
     def set_training_phase(self, phase):
         """
-        Set training phase (teacher_forcing or fine_tuning) - Phase 1.1 Enhancement
-        
+        Set training phase (teacher_forcing or fine_tuning)
+
+        IMPORTANT: L (input history size) stays CONSTANT across both phases!
+        Only the SOURCE of inputs changes:
+        - Teacher forcing: training loop provides ground truth history
+        - Fine-tuning: training loop provides model's own predictions
+
+        This matches the reference TNO implementations where L and K are fixed constants.
+
         Args:
             phase: "teacher_forcing" or "fine_tuning"
         """
         if phase not in ["teacher_forcing", "fine_tuning"]:
             raise ValueError(f"Invalid phase: {phase}. Must be 'teacher_forcing' or 'fine_tuning'")
-            
+
         self.training_phase = phase
-        
-        # Adjust L based on phase
-        if phase == "teacher_forcing":
-            self.L = 2  # Use 2 previous timesteps
-        else:
-            self.L = 1  # Use only 1 previous timestep
-            
-        # Update TNO core with new L
-        self.tno.L = self.L
+
+        # L stays constant - no change needed!
+        # The phase transition is handled by how the training loop feeds data,
+        # not by changing the model's input size
         
     def update_epoch(self, epoch):
         """

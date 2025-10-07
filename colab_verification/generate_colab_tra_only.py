@@ -263,7 +263,7 @@ TRA_CONFIG = {
 MODELS = {
     # Neural Operators (Standalone)
     'fno': {'arch': 'fno', 'dec_width': 56, 'fno_modes': (16, 8)},
-    'tno': {'arch': 'tno', 'dec_width': 96},
+    'tno': {'arch': 'tno+Prev', 'dec_width': 256, 'tno_teacher_forcing_ratio': 0.6},  # L=2, K=4, 60% teacher forcing
     'unet': {'arch': 'unet', 'dec_width': 96},
     'deeponet': {'arch': 'deeponet', 'dec_width': 96, 'n_sensors': 392,
                  'branch_batch_norm': True, 'trunk_batch_norm': True},
@@ -271,8 +271,8 @@ MODELS = {
     # Neural Operators + Diffusion Models (Generative Operators) - Stage 1: prior-only training
     'fno_dm': {'arch': 'genop-fno-diffusion', 'dec_width': 56, 'fno_modes': (16, 8), 'diff_steps': 20, 'training_stage': 1,
                'load_pretrained_prior': True, 'prior_checkpoint_key': 'fno_tra'},
-    'tno_dm': {'arch': 'genop-tno-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1,
-               'load_pretrained_prior': True, 'prior_checkpoint_key': 'tno_tra'},
+    'tno_dm': {'arch': 'genop-tno-diffusion+Prev', 'dec_width': 256, 'diff_steps': 20, 'training_stage': 1,
+               'load_pretrained_prior': True, 'prior_checkpoint_key': 'tno_tra', 'tno_teacher_forcing_ratio': 0.6},
     'unet_dm': {'arch': 'genop-unet-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1,
                 'load_pretrained_prior': True, 'prior_checkpoint_key': 'unet_tra'},
     'deeponet_dm': {'arch': 'genop-deeponet-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1, 'n_sensors': 392,
@@ -476,7 +476,8 @@ def train_model(model_name, config):
             train_history, writer, p_d, p_t,
             checkpoint_path=str(checkpoint_path),
             checkpoint_frequency=max(1, p_t.epochs // 5),  # Save 5 checkpoints during training
-            min_epoch_for_scheduler=10  # Start LR scheduling earlier on Colab
+            min_epoch_for_scheduler=10,  # Start LR scheduling earlier on Colab
+            tno_teacher_forcing_ratio=config.get('tno_teacher_forcing_ratio', 0.0)  # TNO teacher forcing ratio
         )
 
         print(f"     Training {p_t.epochs} epochs on {len(dataset)} samples using Trainer class...")
@@ -639,7 +640,7 @@ def sample_model(model_name: str, config: dict):
 
         # Generate predictions
         print(f"     Generating predictions on {len(test_dataset)} test samples...")
-        predictions = tester.generatePredictions(output_path=str(sample_output_path), model_name=model_name.upper())
+        predictions = tester.generatePredictions(output_path=str(sample_output_path), model_name=model_name.upper(), show_progress=False)
 
         # Save ground truth (only once)
         ground_truth_path = progress_dir / 'sampling' / 'groundTruth.dict'

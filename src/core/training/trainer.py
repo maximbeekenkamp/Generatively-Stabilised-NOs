@@ -25,7 +25,7 @@ class Trainer(object):
 
     def __init__(self, model:PredictionModel, trainLoader:DataLoader, optimizer:Optimizer, lrScheduler:_LRScheduler,
             criterion:PredictionLoss, trainHistory:LossHistory, writer:SummaryWriter, p_d:DataParams, p_t:TrainingParams,
-            checkpoint_path:str=None, checkpoint_frequency:int=None, min_epoch_for_scheduler:int=50):
+            checkpoint_path:str=None, checkpoint_frequency:int=None, min_epoch_for_scheduler:int=50, tno_teacher_forcing_ratio:float=0.0):
         self.model = model
         self.trainLoader = trainLoader
         self.optimizer = optimizer
@@ -38,6 +38,15 @@ class Trainer(object):
         self.checkpoint_path = checkpoint_path
         self.checkpoint_frequency = checkpoint_frequency if checkpoint_frequency is not None else 50
         self.min_epoch_for_scheduler = min_epoch_for_scheduler
+
+        # TNO teacher forcing configuration - calculate epochs from ratio
+        if tno_teacher_forcing_ratio > 0:
+            self.tno_teacher_forcing_epochs = int(p_t.epochs * tno_teacher_forcing_ratio)
+            self.tno_current_phase = "teacher_forcing"
+            print(f"[TNO] Teacher forcing enabled: {self.tno_teacher_forcing_epochs}/{p_t.epochs} epochs ({tno_teacher_forcing_ratio*100:.0f}%)")
+        else:
+            self.tno_teacher_forcing_epochs = 0
+            self.tno_current_phase = "fine_tuning"
 
         self.seqenceLength = self.p_d.sequenceLength[0]
 
@@ -85,6 +94,14 @@ class Trainer(object):
         # TNO Phase 1.1: Update epoch for automatic phase transitions
         if hasattr(self.model.modelDecoder, 'update_epoch'):
             self.model.modelDecoder.update_epoch(epoch)
+
+        # TNO teacher forcing → fine-tuning transition
+        if hasattr(self.model.modelDecoder, 'set_training_phase'):
+            if epoch >= self.tno_teacher_forcing_epochs and self.tno_current_phase == "teacher_forcing":
+                print(f"[TNO] Epoch {epoch}: Transitioning from teacher forcing to fine-tuning")
+                logging.info(f"[TNO] Epoch {epoch}: Transitioning from teacher forcing to fine-tuning")
+                self.model.modelDecoder.set_training_phase('fine_tuning')
+                self.tno_current_phase = "fine_tuning"
 
         self.model.train()
         for s, sample in enumerate(self.trainLoader, 0):
@@ -215,15 +232,22 @@ class Trainer(object):
         if epoch % 50 == 49:
             self.model.eval()
             with torch.no_grad():
-                if obsMask is not None:
-                    maskedPred = prediction * obsMask
-                    maskedData = data * obsMask
+                # Handle tuple predictions from diffusion models (noise, predictedNoise)
+                # During training, diffusion models return intermediate noise for loss computation,
+                # not the actual reconstructed prediction, so skip visualization
+                if isinstance(prediction, tuple):
+                    # Skip visualization for diffusion models - training output is not the final prediction
+                    pass
                 else:
-                    maskedPred = prediction
-                    maskedData = data
+                    if obsMask is not None:
+                        maskedPred = prediction * obsMask
+                        maskedData = data * obsMask
+                    else:
+                        maskedPred = prediction
+                        maskedData = data
 
-                self.trainHistory.writePredictionExample(maskedPred, maskedData)
-                self.trainHistory.writeSequenceLoss(lossSeq)
+                    self.trainHistory.writePredictionExample(maskedPred, maskedData)
+                    self.trainHistory.writeSequenceLoss(lossSeq)
 
         self.trainHistory.prepareAndClearForNextEpoch()
 
@@ -302,15 +326,20 @@ class Tester(object):
             self.testHistory.updateEpoch((timerEnd-timerStart)/60.0)
 
             #if epoch % 50 == 49:
-            if obsMask is not None:
-                maskedPred = prediction * obsMask
-                maskedData = data * obsMask
+            # Handle tuple predictions from diffusion models
+            if isinstance(prediction, tuple):
+                # Skip visualization for diffusion models - tuple output is not the final prediction
+                pass
             else:
-                maskedPred = prediction
-                maskedData = data
+                if obsMask is not None:
+                    maskedPred = prediction * obsMask
+                    maskedData = data * obsMask
+                else:
+                    maskedPred = prediction
+                    maskedData = data
 
-            self.testHistory.writePredictionExample(maskedPred, maskedData)
-            self.testHistory.writeSequenceLoss(lossSeq)
+                self.testHistory.writePredictionExample(maskedPred, maskedData)
+                self.testHistory.writeSequenceLoss(lossSeq)
 
             self.testHistory.prepareAndClearForNextEpoch()
 
