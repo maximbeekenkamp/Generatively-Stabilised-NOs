@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
+from torch.amp import autocast  # GradScaler now inherited from base Trainer
 
 from .trainer import Trainer
 from src.core.models.model import PredictionModel
@@ -83,7 +84,9 @@ class TNOTrainer(Trainer):
         # Store initial learning rate
         if hasattr(self.optimizer, 'param_groups'):
             self.base_lr = self.optimizer.param_groups[0]['lr']
-        
+
+        # NOTE: Mixed precision is now inherited from base Trainer class
+
         print(f"[TNOTrainer] Initialized with:")
         print(f"  - Teacher forcing epochs: {teacher_forcing_epochs}")
         print(f"  - Transition epochs: {transition_epochs}")
@@ -209,42 +212,44 @@ class TNOTrainer(Trainer):
             fade = max(min(fade, 1), 0)
             fadeWeight = fade if fade > 0 else 1
 
-            # Enhanced TNO forward pass
-            if self.model.p_md.arch in ["tno", "tno+Prev", "tno+2Prev", "tno+3Prev"]:
-                prediction = self.model.forwardTNO(data)
-            else:
-                prediction = self.model.forward(data, simParameters, stepsLong=-1)
+            # MIXED PRECISION: Wrap forward pass in autocast
+            with autocast('cuda', enabled=self.use_amp):
+                # Enhanced TNO forward pass
+                if self.model.p_md.arch in ["tno", "tno+Prev", "tno+2Prev", "tno+3Prev"]:
+                    prediction = self.model.forwardTNO(data)
+                else:
+                    prediction = self.model.forward(data, simParameters, stepsLong=-1)
 
-            # TNO-specific loss handling with phase awareness
-            d = data.clone()
-            p = prediction.clone()
+                # TNO-specific loss handling with phase awareness
+                d = data.clone()
+                p = prediction.clone()
 
-            # Handle TNO field extraction (from parent implementation)
-            if self.model.p_md.arch in ["tno", "tno+Prev", "tno+2Prev", "tno+3Prev"]:
-                numFields = self.p_d.dimension + len(self.p_d.simFields)
-                p = p[:, :, 0:numFields]
-                d = d[:, :, 0:numFields]
-                ignorePredLSIMSteps = 0
-            else:
-                # Handle other architectures
-                ignorePredLSIMSteps = 0
+                # Handle TNO field extraction (from parent implementation)
+                if self.model.p_md.arch in ["tno", "tno+Prev", "tno+2Prev", "tno+3Prev"]:
+                    numFields = self.p_d.dimension + len(self.p_d.simFields)
+                    p = p[:, :, 0:numFields]
+                    d = d[:, :, 0:numFields]
+                    ignorePredLSIMSteps = 0
+                else:
+                    # Handle other architectures
+                    ignorePredLSIMSteps = 0
 
-            # Compute loss with phase-aware weighting
-            lossResult = self.criterion(p, d, torch.empty(0), (None, None), 
-                                      weighted=True, fadePredWeight=fadeWeight * transition_weight,
-                                      noLSIM=False, ignorePredLSIMSteps=ignorePredLSIMSteps)
-            
-            loss, lossParts, _ = lossResult
-            
+                # Compute loss with phase-aware weighting
+                lossResult = self.criterion(p, d, torch.empty(0), (None, None),
+                                          weighted=True, fadePredWeight=fadeWeight * transition_weight,
+                                          noLSIM=False, ignorePredLSIMSteps=ignorePredLSIMSteps)
+
+                loss, lossParts, _ = lossResult
+
             # Track TNO-specific metrics
             if 'lossTNO' in lossParts:
                 epoch_tno_loss += lossParts['lossTNO'].item()
-            
+
             epoch_loss += loss.item()
             num_batches += 1
 
-            loss.backward()
-            self.optimizer.step()
+            # MIXED PRECISION: Use parent's centralized backward/optimizer step
+            self._optimize_step(loss)
 
             # Enhanced logging for TNO training
             if s % 50 == 0:

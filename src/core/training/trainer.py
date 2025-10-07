@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
+from torch.amp import autocast
+from torch.cuda.amp import GradScaler
 
 from src.core.models.model import PredictionModel
 from src.core.training.loss import PredictionLoss
@@ -38,6 +40,25 @@ class Trainer(object):
         self.checkpoint_path = checkpoint_path
         self.checkpoint_frequency = checkpoint_frequency if checkpoint_frequency is not None else 50
         self.min_epoch_for_scheduler = min_epoch_for_scheduler
+
+        # Mixed precision training - available to all subclasses
+        self.use_amp = torch.cuda.is_available()
+        self.scaler = GradScaler() if self.use_amp else None
+        if self.use_amp:
+            print(f"[Trainer] Mixed precision (AMP) enabled")
+
+        # JIT compile model for performance (PyTorch 2.0+ on GPU only)
+        if hasattr(torch, 'compile') and torch.cuda.is_available():
+            try:
+                self.model = torch.compile(
+                    self.model,
+                    mode="default",          # Balanced, safe mode
+                    fullgraph=False,         # Allow graph breaks for compatibility
+                    dynamic=True             # Handle dynamic shapes
+                )
+                print(f"[Trainer] Model compiled with torch.compile")
+            except Exception as e:
+                logging.warning(f"Could not compile model: {e}. Training will proceed without compilation.")
 
         # TNO teacher forcing configuration - calculate epochs from ratio
         if tno_teacher_forcing_ratio > 0:
@@ -78,6 +99,23 @@ class Trainer(object):
             self.currentSeqLen = self.seqenceLength
             self.seqIncreaseSteps = []
 
+    def _optimize_step(self, loss):
+        """
+        Perform backward pass and optimizer step with optional mixed precision.
+
+        Centralized method used by all trainers to eliminate code duplication.
+        Handles both FP32 and FP16 training with automatic gradient scaling.
+
+        Args:
+            loss: The loss tensor to backpropagate
+        """
+        if self.use_amp and self.scaler is not None:
+            self.scaler.scale(loss).backward()
+            self.scaler.step(self.optimizer)
+            self.scaler.update()
+        else:
+            loss.backward()
+            self.optimizer.step()
 
     # run one epoch of training
     def trainingStep(self, epoch:int):
@@ -125,92 +163,93 @@ class Trainer(object):
             fadeWeight = fade if fade > 0 else 1
             useLatent = fade > 0
 
-            # Get model output - handle both standard and diffusion model returns
-            model_output = self.model(data, simParameters, useLatent=useLatent)
+            # MIXED PRECISION: Wrap forward pass and loss computation in autocast
+            with autocast('cuda', enabled=self.use_amp):
+                # Get model output - handle both standard and diffusion model returns
+                model_output = self.model(data, simParameters, useLatent=useLatent)
 
-            # Diffusion models (ACDM, Refiner, etc.) return (noise, predictedNoise) during training
-            # Standard models return (prediction, latentSpace, vaeMeanVar)
-            if len(model_output) == 2:
-                # Diffusion model: keep as tuple for loss calculation
-                prediction = model_output
-                latentSpace = None
-                vaeMeanVar = (None, None)
-            else:
-                # Standard model: unpack 3-tuple
-                prediction, latentSpace, vaeMeanVar = model_output
-
-            if self.currentSeqLen < self.seqenceLength:
-                if vaeMeanVar[0] is not None and vaeMeanVar[1] is not None:
-                    vaeMeanVar = (vaeMeanVar[0][:,0:self.currentSeqLen], vaeMeanVar[1][:,0:self.currentSeqLen])
-
-                # Handle tuple predictions (diffusion models)
-                if isinstance(prediction, tuple):
-                    p = tuple(pred[:,0:self.currentSeqLen] if pred is not None else None for pred in prediction)
+                # Diffusion models (ACDM, Refiner, etc.) return (noise, predictedNoise) during training
+                # Standard models return (prediction, latentSpace, vaeMeanVar)
+                if len(model_output) == 2:
+                    # Diffusion model: keep as tuple for loss calculation
+                    prediction = model_output
+                    latentSpace = None
+                    vaeMeanVar = (None, None)
                 else:
-                    p = prediction[:,0:self.currentSeqLen]
+                    # Standard model: unpack 3-tuple
+                    prediction, latentSpace, vaeMeanVar = model_output
 
-                d = data[:,0:self.currentSeqLen]
-                l = latentSpace[:,0:self.currentSeqLen] if latentSpace is not None else None
-            else:
-                p = prediction
-                d = data
-                l = latentSpace
+                if self.currentSeqLen < self.seqenceLength:
+                    if vaeMeanVar[0] is not None and vaeMeanVar[1] is not None:
+                        vaeMeanVar = (vaeMeanVar[0][:,0:self.currentSeqLen], vaeMeanVar[1][:,0:self.currentSeqLen])
 
-            #if obsMask is not None:
-            #    p = p * obsMask
-            #    d = d * obsMask
+                    # Handle tuple predictions (diffusion models)
+                    if isinstance(prediction, tuple):
+                        p = tuple(pred[:,0:self.currentSeqLen] if pred is not None else None for pred in prediction)
+                    else:
+                        p = prediction[:,0:self.currentSeqLen]
 
-            ignorePredLSIMSteps = 0
-            # ignore loss on scalar simulation parameters that are replaced in unet rollout during training
-            if self.model.p_md.arch in ["unet", "unet+Prev", "unet+2Prev", "unet+3Prev",
-                                    "dil_resnet", "dil_resnet+Prev", "dil_resnet+2Prev", "dil_resnet+3Prev",
-                                    "resnet", "resnet+Prev", "resnet+2Prev", "resnet+3Prev",
-                                    "fno", "fno+Prev", "fno+2Prev", "fno+3Prev",
-                                    "dfp", "dfp+Prev", "dfp+2Prev", "dfp+3Prev",]:
-                numFields = self.p_d.dimension + len(self.p_d.simFields)
-                p = p[:,:,0:numFields]
-                d = d[:,:,0:numFields]
-                if "+Prev" in self.model.p_md.arch:
-                    ignorePredLSIMSteps = 1
-                elif "+2Prev" in self.model.p_md.arch:
-                    ignorePredLSIMSteps = 2
-                elif "+3Prev" in self.model.p_md.arch:
-                    ignorePredLSIMSteps = 3
-            elif self.model.p_md.arch in ["tno", "tno+Prev", "tno+2Prev", "tno+3Prev"]:
-                # TNO handles field extraction differently
-                # TNO predicts physical fields, not simulation parameters
-                numFields = self.p_d.dimension + len(self.p_d.simFields)
-                
-                # Extract only physical fields for loss calculation
-                p = p[:, :, 0:numFields]  # Predictions: remove sim params
-                d = d[:, :, 0:numFields]  # Ground truth: remove sim params
-                
-                # For Phase 0 (L=1, K=1): No previous steps to ignore
-                # For Phase 1 (L>1): Still compare all predictions
+                    d = data[:,0:self.currentSeqLen]
+                    l = latentSpace[:,0:self.currentSeqLen] if latentSpace is not None else None
+                else:
+                    p = prediction
+                    d = data
+                    l = latentSpace
+
+                #if obsMask is not None:
+                #    p = p * obsMask
+                #    d = d * obsMask
+
                 ignorePredLSIMSteps = 0
-                
-                # Log TNO-specific information periodically
-                if s % 100 == 0:
-                    if hasattr(self.model.modelDecoder, 'get_info'):
-                        info = self.model.modelDecoder.get_info()
-                        logging.info(f"TNO Status - Phase: {info['training_phase']}, "
-                                   f"L: {info['L']}, K: {info['K']}, "
-                                   f"Epoch: {info['current_epoch']}")
-                
-                # Coordinate TNO's L with curriculum learning if enabled
-                if hasattr(self.model, 'modelDecoder') and hasattr(self.model.modelDecoder, 'L'):
-                    if self.p_t.fadeInSeqLen[0] > 0 and hasattr(self, 'currentSeqLen'):
-                        # Adapt TNO's history length based on curriculum
-                        effective_L = min(self.model.modelDecoder.L, self.currentSeqLen - 1)
-                        if effective_L != self.model.modelDecoder.L and s == 0:  # Log once per epoch
-                            logging.info(f"Adapting TNO L from {self.model.modelDecoder.L} "
-                                       f"to {effective_L} for curriculum learning")
+                # ignore loss on scalar simulation parameters that are replaced in unet rollout during training
+                if self.model.p_md.arch in ["unet", "unet+Prev", "unet+2Prev", "unet+3Prev",
+                                        "dil_resnet", "dil_resnet+Prev", "dil_resnet+2Prev", "dil_resnet+3Prev",
+                                        "resnet", "resnet+Prev", "resnet+2Prev", "resnet+3Prev",
+                                        "fno", "fno+Prev", "fno+2Prev", "fno+3Prev",
+                                        "dfp", "dfp+Prev", "dfp+2Prev", "dfp+3Prev",]:
+                    numFields = self.p_d.dimension + len(self.p_d.simFields)
+                    p = p[:,:,0:numFields]
+                    d = d[:,:,0:numFields]
+                    if "+Prev" in self.model.p_md.arch:
+                        ignorePredLSIMSteps = 1
+                    elif "+2Prev" in self.model.p_md.arch:
+                        ignorePredLSIMSteps = 2
+                    elif "+3Prev" in self.model.p_md.arch:
+                        ignorePredLSIMSteps = 3
+                elif self.model.p_md.arch in ["tno", "tno+Prev", "tno+2Prev", "tno+3Prev"]:
+                    # TNO handles field extraction differently
+                    # TNO predicts physical fields, not simulation parameters
+                    numFields = self.p_d.dimension + len(self.p_d.simFields)
 
-            loss, lossParts, lossSeq = self.criterion(p, d, l, vaeMeanVar, fadePredWeight=fadeWeight, ignorePredLSIMSteps=ignorePredLSIMSteps)
+                    # Extract only physical fields for loss calculation
+                    p = p[:, :, 0:numFields]  # Predictions: remove sim params
+                    d = d[:, :, 0:numFields]  # Ground truth: remove sim params
 
-            loss.backward()
+                    # For Phase 0 (L=1, K=1): No previous steps to ignore
+                    # For Phase 1 (L>1): Still compare all predictions
+                    ignorePredLSIMSteps = 0
 
-            self.optimizer.step()
+                    # Log TNO-specific information periodically
+                    if s % 100 == 0:
+                        if hasattr(self.model.modelDecoder, 'get_info'):
+                            info = self.model.modelDecoder.get_info()
+                            logging.info(f"TNO Status - Phase: {info['training_phase']}, "
+                                       f"L: {info['L']}, K: {info['K']}, "
+                                       f"Epoch: {info['current_epoch']}")
+
+                    # Coordinate TNO's L with curriculum learning if enabled
+                    if hasattr(self.model, 'modelDecoder') and hasattr(self.model.modelDecoder, 'L'):
+                        if self.p_t.fadeInSeqLen[0] > 0 and hasattr(self, 'currentSeqLen'):
+                            # Adapt TNO's history length based on curriculum
+                            effective_L = min(self.model.modelDecoder.L, self.currentSeqLen - 1)
+                            if effective_L != self.model.modelDecoder.L and s == 0:  # Log once per epoch
+                                logging.info(f"Adapting TNO L from {self.model.modelDecoder.L} "
+                                           f"to {effective_L} for curriculum learning")
+
+                loss, lossParts, lossSeq = self.criterion(p, d, l, vaeMeanVar, fadePredWeight=fadeWeight, ignorePredLSIMSteps=ignorePredLSIMSteps)
+
+            # MIXED PRECISION: Use centralized backward/optimizer step
+            self._optimize_step(loss)
 
             timerEnd = time.perf_counter()
             self.trainHistory.updateBatch(lossParts, lossSeq, s, (timerEnd-timerStart)/60.0)

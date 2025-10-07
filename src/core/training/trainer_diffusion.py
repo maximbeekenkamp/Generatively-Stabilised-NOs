@@ -1,10 +1,13 @@
 import time
+import logging
 
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
+from torch.amp import autocast
+from torch.cuda.amp import GradScaler
 
 from src.core.models.model import PredictionModel
 from src.core.training.loss import PredictionLoss
@@ -29,6 +32,20 @@ class TrainerDiffusion(object):
         self.writer = writer
         self.p_t = p_t
 
+        # Mixed precision training
+        self.use_amp = torch.cuda.is_available()
+        self.scaler = GradScaler() if self.use_amp else None
+        if self.use_amp:
+            print(f"[TrainerDiffusion] Mixed precision (AMP) enabled")
+
+        # JIT compile model for performance (GPU only)
+        if hasattr(torch, 'compile') and torch.cuda.is_available():
+            try:
+                self.model = torch.compile(self.model, mode="default")
+                print(f"[TrainerDiffusion] Model compiled with torch.compile")
+            except Exception as e:
+                logging.warning(f"Could not compile model: {e}")
+
 
     # run one epoch of training
     def trainingStep(self, epoch:int):
@@ -44,13 +61,20 @@ class TrainerDiffusion(object):
             data = sample["data"].to(device)
             simParameters = sample["simParameters"].to(device) if type(sample["simParameters"]) is not dict else None
 
-            prediction, _, _ = self.model(data, simParameters)
-            noise, predictedNoise = prediction[0], prediction[1]
+            # MIXED PRECISION: Wrap forward pass and loss computation in autocast
+            with autocast('cuda', enabled=self.use_amp):
+                prediction, _, _ = self.model(data, simParameters)
+                noise, predictedNoise = prediction[0], prediction[1]
+                loss = F.smooth_l1_loss(noise, predictedNoise)
 
-            loss = F.smooth_l1_loss(noise, predictedNoise)
-            loss.backward()
-
-            self.optimizer.step()
+            # MIXED PRECISION: Use scaler for backward/optimizer step
+            if self.use_amp and self.scaler is not None:
+                self.scaler.scale(loss).backward()
+                self.scaler.step(self.optimizer)
+                self.scaler.update()
+            else:
+                loss.backward()
+                self.optimizer.step()
 
             timerEnd = time.perf_counter()
 

@@ -131,7 +131,7 @@ class TNO(nn.Module):
     
     The outputs are combined via Hadamard product and decoded to predictions.
     """
-    def __init__(self, width, L, K, target_size=(80, 160)):
+    def __init__(self, width, L, K, target_size=(80, 160), branch_channels=1, tbranch_channels=2):
         super(TNO, self).__init__()
 
         self.width = width
@@ -143,9 +143,15 @@ class TNO(nn.Module):
         self.adaptive_pool_T = nn.AdaptiveAvgPool2d(self.target_size)
         self.adaptive_pool_B = nn.AdaptiveAvgPool2d(self.target_size)
 
-        # Lifting layers
-        self.fc_T_1 = nn.Linear(self.L, self.width)  # T-Branch lifting
-        self.fc_B_1 = nn.Linear(self.L, self.width)  # Branch lifting
+        # Lifting layers - FIXED: Pre-initialized Conv2d instead of dynamic creation
+        # Branch: lifts auxiliary field from branch_channels → width
+        self.branch_lift = nn.Conv2d(branch_channels, self.width, kernel_size=1, bias=False)
+        # T-Branch: lifts solution history from L*tbranch_channels → width
+        self.tbranch_lift = nn.Conv2d(L * tbranch_channels, self.width, kernel_size=1, bias=False)
+
+        # Xavier initialization to match reference implementations
+        init.xavier_normal_(self.branch_lift.weight)
+        init.xavier_normal_(self.tbranch_lift.weight)
 
         # U-Net processors
         self.unet_T = U_net_2D(self.width, self.width, 3, 0)
@@ -183,9 +189,8 @@ class TNO(nn.Module):
 
         # === Branch Network - process auxiliary field ===
         # Input: [B, 1, H, W] → Output: [B, H, W, width]
-        # Lift 1 channel → width channels using 1x1 conv
-        branch_lift = nn.Conv2d(branch_input.shape[1], self.width, kernel_size=1, bias=False).to(branch_input.device)
-        branch_lifted = branch_lift(branch_input)  # [B, width, H, W]
+        # FIXED: Use pre-initialized lifting layer (no dynamic creation!)
+        branch_lifted = self.branch_lift(branch_input)  # [B, width, H, W]
 
         branch_processed = self.adaptive_pool_B(branch_lifted)  # Downsample: [B, width, 80, 160]
         branch_processed = F.tanh(self.unet_B(branch_processed))  # U-Net: [B, width, 80, 160]
@@ -197,9 +202,8 @@ class TNO(nn.Module):
 
         # === T-Branch Network - process solution history ===
         # Input: [B, L*C_sol, H, W] → Output: [B, H, W, width]
-        # Lift L*C_sol channels → width channels using 1x1 conv
-        tbranch_lift = nn.Conv2d(tbranch_input.shape[1], self.width, kernel_size=1, bias=False).to(tbranch_input.device)
-        tbranch_lifted = tbranch_lift(tbranch_input)  # [B, width, H, W]
+        # FIXED: Use pre-initialized lifting layer (no dynamic creation!)
+        tbranch_lifted = self.tbranch_lift(tbranch_input)  # [B, width, H, W]
 
         tbranch_processed = self.adaptive_pool_T(tbranch_lifted)  # Downsample: [B, width, 80, 160]
         tbranch_processed = self.unet_T(tbranch_processed)  # U-Net: [B, width, 80, 160]
@@ -276,11 +280,18 @@ class TNOModel(nn.Module):
         # Validate dataset type
         if self.dataset_type not in self.field_mappings:
             raise ValueError(f"Unknown dataset type: {dataset_type}")
-            
+
         self.field_config = self.field_mappings[self.dataset_type]
-        
-        # Core TNO
-        self.tno = TNO(width, L, K, target_size)
+
+        # Core TNO - FIXED: Pass channel counts for pre-initialized lifting layers
+        branch_channels = self.field_config["param_channels"]  # Auxiliary field channels
+        tbranch_channels = self.field_config["solution_channels"]  # Solution field channels
+        self.tno = TNO(width, L, K, target_size,
+                      branch_channels=branch_channels,
+                      tbranch_channels=tbranch_channels)
+
+        # Optimization: Cache coordinate grids for common spatial sizes
+        self._coord_grid_cache = {}
 
     def _extract_branch_input(self, data):
         """
@@ -338,6 +349,7 @@ class TNOModel(nn.Module):
     def _generate_coordinate_grids(self, data, output_time_idx=None):
         """
         Generate (t,x,y) coordinate grids for trunk network - TNO Corrected
+        OPTIMIZED: Caches spatial grids to reduce repeated allocations
 
         Trunk processes coordinate inputs (t,x,y) for the output prediction time.
         Returns [B, H, W, 3] for processing through the trunk MLP.
@@ -351,18 +363,25 @@ class TNOModel(nn.Module):
         """
         B, T, C, H, W = data.shape
 
-        # Generate normalized spatial coordinate grids [0, 1]
-        x = torch.linspace(0, 1, W, device=data.device)
-        y = torch.linspace(0, 1, H, device=data.device)
-        grid_y, grid_x = torch.meshgrid(y, x, indexing='ij')  # [H, W]
-
         # Time coordinate (normalized) for prediction step
-        # Default: predict at t = L (next step after history)
         if output_time_idx is None:
             t_norm = float(self.L) / max(T, self.L + 1)
         else:
             t_norm = float(output_time_idx) / T
 
+        # OPTIMIZATION: Cache spatial coordinate grids by size
+        cache_key = (H, W, str(data.device))
+        if cache_key not in self._coord_grid_cache:
+            # Generate normalized spatial coordinate grids [0, 1]
+            x = torch.linspace(0, 1, W, device=data.device)
+            y = torch.linspace(0, 1, H, device=data.device)
+            grid_y, grid_x = torch.meshgrid(y, x, indexing='ij')  # [H, W]
+            # Cache the spatial grids
+            self._coord_grid_cache[cache_key] = (grid_x, grid_y)
+        else:
+            grid_x, grid_y = self._coord_grid_cache[cache_key]
+
+        # Create time coordinate
         t_coord = torch.full_like(grid_x, t_norm)  # [H, W]
 
         # Stack as [H, W, 3] for (t, x, y)

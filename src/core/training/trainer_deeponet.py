@@ -15,6 +15,7 @@ from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.tensorboard import SummaryWriter
+from torch.amp import autocast
 
 from .trainer import Trainer
 from .loss_history import LossHistory
@@ -102,18 +103,28 @@ class DeepONetTrainer(Trainer):
             device = "cuda" if self.model.useGPU else "cpu"
             batch = self._move_batch_to_device(batch, device)
 
-            # Forward pass
-            loss_dict = self._forward_pass(batch, epoch)
-
-            # Backward pass
-            total_loss = loss_dict['total_loss']
-            total_loss.backward()
+            # MIXED PRECISION: Wrap forward pass in autocast
+            with autocast('cuda', enabled=self.use_amp):
+                loss_dict = self._forward_pass(batch, epoch)
 
             # Gradient clipping if specified
+            # NOTE: Must unscale gradients before clipping when using mixed precision
+            total_loss = loss_dict['total_loss']
             if hasattr(self.p_t, 'gradient_clip') and self.p_t.gradient_clip > 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.p_t.gradient_clip)
-
-            self.optimizer.step()
+                if self.use_amp and self.scaler is not None:
+                    # Unscale gradients before clipping to avoid clipping on scaled gradients
+                    self.scaler.scale(total_loss).backward()
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.p_t.gradient_clip)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                else:
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.p_t.gradient_clip)
+                    self.optimizer.step()
+            else:
+                # No gradient clipping: use parent's centralized method
+                self._optimize_step(total_loss)
 
             # Update adaptive sensors if enabled
             if self.sensor_sampler is not None:
