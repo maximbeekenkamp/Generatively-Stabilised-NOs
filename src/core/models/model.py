@@ -312,16 +312,18 @@ class PredictionModel(nn.Module):
         """
         # Check simulation parameters to identify dataset
         if hasattr(self.p_d, 'simParams') and self.p_d.simParams:
-            if "rey" in self.p_d.simParams and len(self.p_d.simParams) == 1:
+            # Check for Mach parameter (transonic dataset)
+            if "mach" in self.p_d.simParams:
+                return "tra"  # Transonic cylinder dataset (Mach with or without Reynolds)
+            # Check for Reynolds only (incompressible dataset)
+            elif "rey" in self.p_d.simParams:
                 return "inc"  # Incompressible wake (Reynolds only)
-            elif "mach" in self.p_d.simParams and "rey" in self.p_d.simParams:
-                return "tra"  # Transonic cylinder (Mach + Reynolds)
-        
+
         # Check simulation fields as fallback
         if hasattr(self.p_d, 'simFields') and self.p_d.simFields:
             if "velZ" in self.p_d.simFields:
                 return "iso"  # Isotropic turbulence (has 3D velocity)
-        
+
         # Default to incompressible
         return "inc"
 

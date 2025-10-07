@@ -795,6 +795,36 @@ with Progress(
 
 print(f"\\n✅ Plotting complete: {plot_count}/{len(MODELS)} models")"""))
 
+# Cell 6b: Rollout Error Analysis
+notebook["cells"].append(create_cell("code", """# Cell 6b: Rollout Error Analysis - Stability over Autoregressive Rollout
+
+from src.analysis.plot_rollout_error import plot_rollout_error
+
+print("\\n" + "="*60)
+print("📈 ROLLOUT ERROR ANALYSIS")
+print("="*60)
+
+rollout_plot_path = progress_dir / 'plots' / 'rollout_error.png'
+
+try:
+    plot_rollout_error(
+        prediction_folder=progress_dir / 'sampling',
+        model_names=list(MODELS.keys()),
+        output_path=rollout_plot_path,
+        metric='mse',
+        title='Autoregressive Rollout Stability (MSE vs Frame)'
+    )
+    print(f"\\n✅ Rollout error plot saved: {rollout_plot_path}")
+
+    # Display the plot
+    from IPython.display import Image, display
+    display(Image(filename=str(rollout_plot_path)))
+
+except Exception as e:
+    print(f"  ⚠️  Rollout error plot failed: {str(e)[:100]}")
+    import traceback
+    traceback.print_exc()"""))
+
 # Cell 7: Summary
 notebook["cells"].append(create_cell("code", """# Cell 7: Summary
 print("="*60)

@@ -99,11 +99,26 @@ class ElucidatedDiffusion(nn.Module):
         else:
             raise ValueError(f"Unexpected tensor shape: {noised_images.shape}")
 
-        # Call Unet with correct signature (x, time)
-        net_out = self.net(
-            self.c_in(padded_sigma) * noised_images,
-            self.c_noise(sigma)
-        )
+        # Apply sigma-dependent input scaling
+        scaled_input = self.c_in(padded_sigma) * noised_images
+
+        # Concatenate with conditioning (following DiffusionModel pattern)
+        # This allows U-Net to learn: p(u_true | û_NO_prediction)
+        if self_cond is not None:
+            # Concatenate: [B, C, H, W] + [B, C, H, W] → [B, 2*C, H, W]
+            unet_input = torch.cat([scaled_input, self_cond], dim=1)
+        else:
+            # No conditioning provided - pad with zeros to maintain consistent input size
+            # This should rarely happen in NO+DM inference/training
+            import warnings
+            if self.training:
+                warnings.warn("ElucidatedDiffusion received None conditioning during training. "
+                             "NO+DM corrector should always receive prior predictions as conditioning.")
+            zeros_cond = torch.zeros_like(scaled_input)
+            unet_input = torch.cat([scaled_input, zeros_cond], dim=1)
+
+        # Forward through U-Net with doubled input channels
+        net_out = self.net(unet_input, self.c_noise(sigma))
 
         out = self.c_skip(padded_sigma) * noised_images + self.c_out(padded_sigma) * net_out
 
@@ -227,10 +242,11 @@ class DiffusionCorrector(GenerativeCorrector):
         self.correction_strength = 1.0
 
         # Create U-Net for diffusion model
+        # Input channels doubled for conditioning: [noisy_image | prior_prediction]
         self.unet = Unet(
             dim=max(16, p_md.decWidth // 4),  # Scale down for efficiency
             out_dim=self.channels,
-            channels=self.channels,
+            channels=self.channels * 2,  # Double channels for concatenated conditioning
             dim_mults=(1, 2, 4, 8),
             use_convnext=True,
             convnext_mult=1,

@@ -151,8 +151,8 @@ class TNO(nn.Module):
         self.unet_T = U_net_2D(self.width, self.width, 3, 0)
         self.unet_B = U_net_2D(self.width, self.width, 3, 0)
 
-        # Trunk (Time Neural Network)
-        self.time_nn = TimeNN(in_width=self.L, hidden_width=self.width, output_dim=self.width, num_layers=12)
+        # Trunk (Time Neural Network) - processes (t, x, y) coordinates
+        self.time_nn = TimeNN(in_width=3, hidden_width=self.width, output_dim=self.width, num_layers=12)
 
         # Decoder network
         self.fc_2 = nn.Linear(self.width, self.width)
@@ -161,55 +161,64 @@ class TNO(nn.Module):
 
     def forward(self, branch_input, trunk_input, tbranch_input):
         """
-        Forward pass through TNO
-        
+        Forward pass through TNO - Corrected Architecture
+
         Args:
-            branch_input: Auxiliary functions [B, H, W, L] 
-            trunk_input: Coordinate grids [B, H, W, L]
-            tbranch_input: Solution history [B, H, W, L]
-            
+            branch_input: Auxiliary field [B, 1, H, W] - single timepoint
+            trunk_input: Coordinate grids [B, H, W, 3] - (t, x, y) coordinates
+            tbranch_input: Solution history [B, L*C_sol, H, W] - flattened temporal history
+
         Returns:
-            predictions: [B, H, W, K]
+            predictions: [B, H, W, K] prediction for next K timesteps
         """
-        original_size = trunk_input.shape[1:3]
-        
-        # Trunk Network - process coordinate grids
-        num, grid_x, grid_y = trunk_input.shape[0], trunk_input.shape[1], trunk_input.shape[2]
-        trunk_flat = trunk_input.reshape(num, -1, self.L)
-        trunk_processed = self.time_nn(trunk_flat)
-        trunk_processed = trunk_processed.reshape(num, grid_x, grid_y, self.width)
-        
-        # Branch Network - process auxiliary functions
-        branch_processed = self.fc_B_1(branch_input)
-        branch_processed = branch_processed.permute(0, 3, 1, 2)  # [B, C, H, W]
-        branch_processed = self.adaptive_pool_B(branch_processed)  
-        branch_processed = F.tanh(self.unet_B(branch_processed))
-        
+        original_size = branch_input.shape[2:4]  # [H, W]
+        B = branch_input.shape[0]
+
+        # === Trunk Network - process (t,x,y) coordinates ===
+        # Input: [B, H, W, 3] → Output: [B, H, W, width]
+        H, W = trunk_input.shape[1], trunk_input.shape[2]
+        trunk_flat = trunk_input.reshape(-1, 3)  # [B*H*W, 3]
+        trunk_processed = self.time_nn(trunk_flat)  # [B*H*W, width]
+        trunk_processed = trunk_processed.reshape(B, H, W, self.width)  # [B, H, W, width]
+
+        # === Branch Network - process auxiliary field ===
+        # Input: [B, 1, H, W] → Output: [B, H, W, width]
+        # Lift 1 channel → width channels using 1x1 conv
+        branch_lift = nn.Conv2d(branch_input.shape[1], self.width, kernel_size=1, bias=False).to(branch_input.device)
+        branch_lifted = branch_lift(branch_input)  # [B, width, H, W]
+
+        branch_processed = self.adaptive_pool_B(branch_lifted)  # Downsample: [B, width, 80, 160]
+        branch_processed = F.tanh(self.unet_B(branch_processed))  # U-Net: [B, width, 80, 160]
+
         # Upsample back to original size
         upsample_B = nn.Upsample(size=original_size, mode='bilinear', align_corners=True)
-        branch_processed = upsample_B(branch_processed)
-        branch_processed = branch_processed.permute(0, 2, 3, 1)  # [B, H, W, C]
-        
-        # T-Branch Network - process solution history
-        tbranch_processed = self.fc_T_1(tbranch_input)
-        tbranch_processed = tbranch_processed.permute(0, 3, 1, 2)  # [B, C, H, W]
-        tbranch_processed = self.adaptive_pool_T(tbranch_processed)  
-        tbranch_processed = self.unet_T(tbranch_processed)
-        
+        branch_processed = upsample_B(branch_processed)  # [B, width, H, W]
+        branch_processed = branch_processed.permute(0, 2, 3, 1)  # [B, H, W, width]
+
+        # === T-Branch Network - process solution history ===
+        # Input: [B, L*C_sol, H, W] → Output: [B, H, W, width]
+        # Lift L*C_sol channels → width channels using 1x1 conv
+        tbranch_lift = nn.Conv2d(tbranch_input.shape[1], self.width, kernel_size=1, bias=False).to(tbranch_input.device)
+        tbranch_lifted = tbranch_lift(tbranch_input)  # [B, width, H, W]
+
+        tbranch_processed = self.adaptive_pool_T(tbranch_lifted)  # Downsample: [B, width, 80, 160]
+        tbranch_processed = self.unet_T(tbranch_processed)  # U-Net: [B, width, 80, 160]
+
         # Upsample back to original size
         upsample_T = nn.Upsample(size=original_size, mode='bilinear', align_corners=True)
-        tbranch_processed = upsample_T(tbranch_processed)
-        tbranch_processed = tbranch_processed.permute(0, 2, 3, 1)  # [B, H, W, C]
+        tbranch_processed = upsample_T(tbranch_processed)  # [B, width, H, W]
+        tbranch_processed = tbranch_processed.permute(0, 2, 3, 1)  # [B, H, W, width]
 
-        # Combine via Hadamard product
-        combined_output = tbranch_processed * trunk_processed * branch_processed 
+        # === Hadamard Product Combination ===
+        # All inputs now: [B, H, W, width]
+        combined_output = tbranch_processed * trunk_processed * branch_processed  # [B, H, W, width]
 
-        # Decoder
-        combined_output = self.fc_2(combined_output)
-        combined_output = self.fc_3(combined_output)
-        final_output = self.fc_4(combined_output)
-        
-        return final_output
+        # === Decoder ===
+        combined_output = F.relu(self.fc_2(combined_output))  # [B, H, W, width]
+        combined_output = F.relu(self.fc_3(combined_output))  # [B, H, W, width]
+        final_output = self.fc_4(combined_output)  # [B, H, W, K]
+
+        return final_output  # [B, H, W, K]
 
 
 class TNOModel(nn.Module):
@@ -236,30 +245,30 @@ class TNOModel(nn.Module):
         self.current_epoch = 0
         self.training_phase = "teacher_forcing" if L > 1 else "fine_tuning"
         
-        # Dataset-specific field mappings - Phase 1.1 Enhanced
+        # Dataset-specific field mappings - Corrected for actual data structure
         self.field_mappings = {
             "inc": {
                 "branch_fields": ["reynolds"],  # Reynolds parameter
                 "tbranch_fields": ["velocity_x", "velocity_y"],  # Velocity history
                 "target_fields": ["velocity_x", "velocity_y"],  # Predict velocity
-                "total_channels": 4,  # vx, vy, pressure, reynolds
-                "physics_channels": 3,  # vx, vy, pressure
+                "total_channels": 3,  # vx, vy, reynolds
+                "solution_channels": 2,  # vx, vy
                 "param_channels": 1   # reynolds
             },
             "tra": {
-                "branch_fields": ["mach", "reynolds"],  # Mach + Reynolds parameters
-                "tbranch_fields": ["pressure"],  # Pressure history
-                "target_fields": ["pressure"],  # Predict pressure
-                "total_channels": 6,  # vx, vy, density, pressure, reynolds, mach
-                "physics_channels": 4,  # vx, vy, density, pressure
-                "param_channels": 2   # reynolds, mach
+                "branch_fields": ["mach"],  # Mach parameter only
+                "tbranch_fields": ["velocity_x", "velocity_y", "density", "pressure"],  # All solution fields
+                "target_fields": ["velocity_x", "velocity_y", "density", "pressure"],  # Predict all fields
+                "total_channels": 5,  # vx, vy, density, pressure, mach
+                "solution_channels": 4,  # vx, vy, density, pressure
+                "param_channels": 1   # mach (no reynolds in TRA data)
             },
             "iso": {
-                "branch_fields": ["energy", "z_index"],  # Turbulent energy + Z-slice
+                "branch_fields": ["energy"],  # Turbulent kinetic energy
                 "tbranch_fields": ["velocity_x", "velocity_y", "velocity_z"],  # 3D velocity
                 "target_fields": ["velocity_x", "velocity_y", "velocity_z"],
-                "total_channels": 5,  # vx, vy, vz, pressure, z_slice
-                "physics_channels": 4,  # vx, vy, vz, pressure
+                "total_channels": 4,  # vx, vy, vz, z_slice
+                "solution_channels": 3,  # vx, vy, vz
                 "param_channels": 1   # z_slice
             }
         }
@@ -275,172 +284,189 @@ class TNOModel(nn.Module):
 
     def _extract_branch_input(self, data):
         """
-        Extract auxiliary input functions based on dataset type - Phase 1.1 Enhanced
-        
+        Extract auxiliary function at SINGLE timepoint (t=0) - TNO Corrected
+
+        Branch processes the auxiliary input function v(t₀,·) at a single time.
+        NO temporal dimension - returns [B, 1, H, W] for channel-first Conv2d processing.
+
         Args:
             data: Input tensor [B, T, C, H, W]
-            
+
         Returns:
-            branch_input: Tensor [B, H, W, L] containing auxiliary functions
+            branch_input: Tensor [B, 1, H, W] containing auxiliary field at t=0
         """
         B, T, C, H, W = data.shape
-        
+
         if self.dataset_type == "inc":
-            # For Inc: Extract Reynolds parameter (spatially expanded)
+            # Reynolds parameter from last channel at t=0
             if C >= self.field_config["total_channels"]:
-                reynolds_field = data[:, :self.L, -1:, :, :]  # [B, L, 1, H, W] - last channel
-                branch_input = reynolds_field.squeeze(2).permute(0, 2, 3, 1)  # [B, H, W, L]
+                branch_input = data[:, 0, -1:, :, :]  # [B, 1, H, W]
             else:
                 # Create synthetic obstacle mask if Reynolds not available
-                branch_input = torch.zeros(B, H, W, self.L, device=data.device)
+                branch_input = torch.zeros(B, 1, H, W, device=data.device)
                 center_h, center_w = H // 2, W // 2
                 obstacle_size = min(H, W) // 8
-                branch_input[:, 
+                branch_input[:, :,
                            center_h - obstacle_size//2:center_h + obstacle_size//2,
-                           center_w - obstacle_size//2:center_w + obstacle_size//2, 
-                           :] = 1.0
-                        
-        elif self.dataset_type == "tra":
-            # For Tra: Extract Mach and Reynolds parameters
-            if C >= self.field_config["total_channels"]:
-                param_fields = data[:, :self.L, -2:, :, :]  # [B, L, 2, H, W] - last 2 channels
-                # Average parameters across channels
-                branch_input = param_fields.mean(dim=2).permute(0, 2, 3, 1)  # [B, H, W, L]
-            else:
-                branch_input = torch.ones(B, H, W, self.L, device=data.device) * 0.5
-                
-        elif self.dataset_type == "iso":
-            # For Iso: Compute turbulent kinetic energy from velocity components
-            if C >= 3:
-                velocity_fields = data[:, :self.L, 0:3, :, :]  # [B, L, 3, H, W] - first 3 channels (vx,vy,vz)
-                tke = 0.5 * (velocity_fields ** 2).sum(dim=2)  # [B, L, H, W] - Turbulent Kinetic Energy
-                branch_input = tke.permute(0, 2, 3, 1)  # [B, H, W, L]
-            else:
-                branch_input = torch.randn(B, H, W, self.L, device=data.device) * 0.1
-        else:
-            # Fallback to original behavior
-            param_start_idx = self.field_config["physics_channels"]
-            params = data[:, :, param_start_idx:, :, :]  # [B, T, param_channels, H, W]
-            params = params[:, 0, :, :, :]  # [B, param_channels, H, W]
-            params = params.unsqueeze(1).expand(-1, self.L, -1, -1, -1)  # [B, L, param_channels, H, W]
-            branch_input = params.mean(dim=2)  # [B, L, H, W]
-            branch_input = branch_input.permute(0, 2, 3, 1)
-        
-        return branch_input
+                           center_w - obstacle_size//2:center_w + obstacle_size//2] = 1.0
 
-    def _generate_coordinate_grids(self, data):
+        elif self.dataset_type == "tra":
+            # Mach parameter from last channel at t=0 (NO Reynolds averaging)
+            if C >= self.field_config["total_channels"]:
+                branch_input = data[:, 0, -1:, :, :]  # [B, 1, H, W] - Mach only
+            else:
+                branch_input = torch.ones(B, 1, H, W, device=data.device) * 0.5
+
+        elif self.dataset_type == "iso":
+            # Turbulent kinetic energy from velocity components at t=0
+            if C >= 3:
+                velocity = data[:, 0, 0:3, :, :]  # [B, 3, H, W]
+                tke = 0.5 * (velocity ** 2).sum(dim=1, keepdim=True)  # [B, 1, H, W]
+                branch_input = tke
+            else:
+                branch_input = torch.randn(B, 1, H, W, device=data.device) * 0.1
+        else:
+            # Fallback: use first parameter channel at t=0
+            param_start_idx = self.field_config["solution_channels"]
+            if C > param_start_idx:
+                branch_input = data[:, 0, param_start_idx:param_start_idx+1, :, :]  # [B, 1, H, W]
+            else:
+                branch_input = torch.zeros(B, 1, H, W, device=data.device)
+
+        return branch_input  # [B, 1, H, W]
+
+    def _generate_coordinate_grids(self, data, output_time_idx=None):
         """
-        Generate coordinate grids for trunk network
-        
+        Generate (t,x,y) coordinate grids for trunk network - TNO Corrected
+
+        Trunk processes coordinate inputs (t,x,y) for the output prediction time.
+        Returns [B, H, W, 3] for processing through the trunk MLP.
+
         Args:
             data: [B, T, C, H, W] tensor
-            
+            output_time_idx: Optional time index for prediction (default: L for next step)
+
         Returns:
-            trunk_input: [B, H, W, L] coordinate grids
+            trunk_input: [B, H, W, 3] coordinate tensor with (t, x, y) at each spatial location
         """
         B, T, C, H, W = data.shape
-        
-        # Generate normalized coordinate grids
+
+        # Generate normalized spatial coordinate grids [0, 1]
         x = torch.linspace(0, 1, W, device=data.device)
         y = torch.linspace(0, 1, H, device=data.device)
-        grid_x, grid_y = torch.meshgrid(x, y, indexing='xy')
-        
-        # Create coordinate grid [H, W, 2]
-        coords = torch.stack([grid_x, grid_y], dim=-1)  # [H, W, 2]
-        
-        # Expand for batch and sequence dimensions [B, H, W, L]
-        # For simplicity, we'll use spatial coordinates repeated L times
-        coords = coords.unsqueeze(0).unsqueeze(-1)  # [1, H, W, 2, 1]
-        coords = coords.expand(B, -1, -1, -1, self.L)  # [B, H, W, 2, L]
-        
-        # Take mean over coordinate dimensions to get [B, H, W, L]
-        trunk_input = coords.mean(dim=3)  # [B, H, W, L]
-        
-        return trunk_input
+        grid_y, grid_x = torch.meshgrid(y, x, indexing='ij')  # [H, W]
+
+        # Time coordinate (normalized) for prediction step
+        # Default: predict at t = L (next step after history)
+        if output_time_idx is None:
+            t_norm = float(self.L) / max(T, self.L + 1)
+        else:
+            t_norm = float(output_time_idx) / T
+
+        t_coord = torch.full_like(grid_x, t_norm)  # [H, W]
+
+        # Stack as [H, W, 3] for (t, x, y)
+        coords = torch.stack([t_coord, grid_x, grid_y], dim=-1)  # [H, W, 3]
+
+        # Expand for batch dimension: [B, H, W, 3]
+        trunk_input = coords.unsqueeze(0).expand(B, -1, -1, -1)
+
+        return trunk_input  # [B, H, W, 3]
 
     def _extract_tbranch_input(self, data):
         """
-        Extract solution history based on dataset type - Phase 1.1 Enhanced
-        
+        Extract L timesteps of ALL solution fields - TNO Corrected
+
+        T-Branch processes the solution history U_hist over L timesteps.
+        Returns [B, L*C_sol, H, W] by flattening temporal and channel dimensions.
+        NO AVERAGING - preserves all coupled solution variables independently.
+
         Args:
             data: Input tensor [B, T, C, H, W]
-            
+
         Returns:
-            tbranch_input: Tensor [B, H, W, L] containing solution history
+            tbranch_input: Tensor [B, L*C_sol, H, W] with flattened solution history
         """
         B, T, C, H, W = data.shape
-        
+
         if self.dataset_type == "inc":
-            # Extract velocity components and compute magnitude
-            if C >= 3:
-                velocity = data[:, :self.L, 0:2, :, :]  # [B, L, 2, H, W] - vx, vy (channels 0,1)
-                vel_mag = torch.sqrt((velocity ** 2).sum(dim=2) + 1e-8)  # [B, L, H, W] - avoid div by 0
-                tbranch_input = vel_mag.permute(0, 2, 3, 1)  # [B, H, W, L]
+            # Channels 0-1: vx, vy (all velocity components, no magnitude)
+            if C >= 2:
+                solution_fields = data[:, :self.L, 0:2, :, :]  # [B, L, 2, H, W]
             else:
-                tbranch_input = data[:, :self.L, 0, :, :].permute(0, 2, 3, 1)
-                
+                solution_fields = data[:, :self.L, 0:1, :, :]  # [B, L, 1, H, W]
+            # Flatten L and C_sol: [B, L*2, H, W] or [B, L*1, H, W]
+            L_actual, C_sol = solution_fields.shape[1], solution_fields.shape[2]
+            tbranch_input = solution_fields.reshape(B, L_actual * C_sol, H, W)
+
         elif self.dataset_type == "tra":
-            # Extract pressure field for transonic flow prediction
+            # Channels 0-3: vx, vy, density, pressure (ALL coupled solution fields)
             if C >= 4:
-                pressure = data[:, :self.L, 3, :, :]  # [B, L, H, W] - pressure (channel 3)
-                tbranch_input = pressure.permute(0, 2, 3, 1)  # [B, H, W, L]
+                solution_fields = data[:, :self.L, 0:4, :, :]  # [B, L, 4, H, W]
             else:
-                pressure = data[:, :self.L, 0, :, :]  # [B, L, H, W] - fallback to first channel
-                tbranch_input = pressure.permute(0, 2, 3, 1)
-            
+                # Fallback if data incomplete
+                available_channels = min(C, 4)
+                solution_fields = data[:, :self.L, 0:available_channels, :, :]
+            # Flatten L and C_sol: [B, L*4, H, W]
+            L_actual, C_sol = solution_fields.shape[1], solution_fields.shape[2]
+            tbranch_input = solution_fields.reshape(B, L_actual * C_sol, H, W)
+
         elif self.dataset_type == "iso":
-            # Extract all velocity components for 3D turbulence
-            if C >= 4:
-                velocity = data[:, :self.L, 0:3, :, :]  # [B, L, 3, H, W] - vx, vy, vz
-                vel_mag = torch.sqrt((velocity ** 2).sum(dim=2) + 1e-8)  # [B, L, H, W]
-                tbranch_input = vel_mag.permute(0, 2, 3, 1)  # [B, H, W, L]
+            # Channels 0-2: vx, vy, vz (all 3D velocity components)
+            if C >= 3:
+                solution_fields = data[:, :self.L, 0:3, :, :]  # [B, L, 3, H, W]
             else:
-                tbranch_input = data[:, :self.L, 0, :, :].permute(0, 2, 3, 1)
+                solution_fields = data[:, :self.L, 0:min(C, 3), :, :]
+            # Flatten L and C_sol: [B, L*3, H, W]
+            L_actual, C_sol = solution_fields.shape[1], solution_fields.shape[2]
+            tbranch_input = solution_fields.reshape(B, L_actual * C_sol, H, W)
         else:
-            # Fallback to original behavior
-            physics = data[:, :self.L, :self.field_config["physics_channels"], :, :]  # [B, L, physics_channels, H, W]
-            tbranch_input = physics.mean(dim=2)  # [B, L, H, W]
-            tbranch_input = tbranch_input.permute(0, 2, 3, 1)
-        
-        return tbranch_input
+            # Fallback: use all solution channels
+            solution_channels = self.field_config["solution_channels"]
+            solution_fields = data[:, :self.L, 0:solution_channels, :, :]
+            L_actual, C_sol = solution_fields.shape[1], solution_fields.shape[2]
+            tbranch_input = solution_fields.reshape(B, L_actual * C_sol, H, W)
+
+        return tbranch_input  # [B, L*C_sol, H, W]
 
     def forward(self, data):
         """
-        Forward pass through TNO model with multi-channel support - Phase 1.1 Enhanced
-        
+        Forward pass through TNO model - Corrected Architecture
+
         Args:
             data: [B, T, C, H, W] tensor in Gen Stabilised format
-            
+
         Returns:
-            output: [B, K, target_channels, H, W] predictions 
+            output: [B, K, target_channels, H, W] predictions
         """
         B, T, C, H, W = data.shape
-        
+
         # Ensure we have enough timesteps for the current L
         if T < self.L:
             raise ValueError(f"Input sequence length {T} < required history length {self.L}")
-        
-        # Extract inputs for TNO's three networks
-        branch_input = self._extract_branch_input(data)      # [B, H, W, L]
-        trunk_input = self._generate_coordinate_grids(data)  # [B, H, W, L]  
-        tbranch_input = self._extract_tbranch_input(data)    # [B, H, W, L]
-        
-        # Forward through TNO
+
+        # Extract inputs for TNO's three networks (corrected shapes)
+        branch_input = self._extract_branch_input(data)         # [B, 1, H, W]
+        trunk_input = self._generate_coordinate_grids(data)     # [B, H, W, 3]
+        tbranch_input = self._extract_tbranch_input(data)       # [B, L*C_sol, H, W]
+
+        # Forward through TNO core
         tno_output = self.tno(branch_input, trunk_input, tbranch_input)  # [B, H, W, K]
-        
-        # Convert to Gen Stabilised format and handle multi-channel prediction
+
+        # Convert to Gen Stabilised format
         output = tno_output.permute(0, 3, 1, 2)  # [B, K, H, W]
-        
+
         # Determine number of target channels based on dataset
         num_target_fields = len(self.field_config["target_fields"])
-        
+
         if num_target_fields > 1:
-            # Multi-channel prediction: expand or split TNO output
+            # Multi-channel prediction: expand TNO output to all target fields
+            # Note: TNO predicts K timesteps, we expand each to include all solution channels
             output = output.unsqueeze(2).expand(-1, -1, num_target_fields, -1, -1)  # [B, K, target_channels, H, W]
         else:
-            # Single-channel prediction (original behavior)
+            # Single-channel prediction
             output = output.unsqueeze(2)  # [B, K, 1, H, W]
-        
+
         return output
 
     def set_training_phase(self, phase):

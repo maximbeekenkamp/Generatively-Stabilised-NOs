@@ -821,11 +821,15 @@ def compute_model_metrics(model_name: str, config: Dict[str, Any], progress_dir:
         avg_lsim = np.mean(lsim_scores) if lsim_scores else 0.0
 
         # Estimate inference time (load model and run single prediction)
-        p_me, p_md, p_ml, deeponet_overrides = create_model_params(config)
+        # Load checkpoint first to extract saved config
+        checkpoint = torch.load(checkpoint_path, map_location='cpu' if not use_gpu else None, weights_only=False)
+        checkpoint_config = checkpoint.get('config', {})
+
+        # Create model params with checkpoint config for exact architecture matching
+        p_me, p_md, p_ml, deeponet_overrides = create_model_params(config, checkpoint_config)
         p_t = TrainingParams(epochs=1, lr=0.0001)
 
         model = PredictionModel(p_d, p_t, p_l, p_me, p_md, p_ml, "", useGPU=use_gpu)
-        checkpoint = torch.load(checkpoint_path, map_location='cpu' if not use_gpu else None, weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'], strict=False)
         model.eval()
 
@@ -953,11 +957,11 @@ def main():
     print()
 
     # Phase 1: Training
+    success_count = 0  # Initialize before conditional to avoid UnboundLocalError
     if not args.skip_training:
         print("\n" + "=" * 60)
         print("🏋️  TRAINING PHASE")
         print("=" * 60)
-        success_count = 0
         for model_name in selected_models:
             print("\n" + "=" * 60)
             print(f"🔬 Model: {model_name.upper()}")
@@ -1017,6 +1021,23 @@ def main():
     # Phase 3: Plotting
     if args.plot:
         plot_models(args, progress_dir, selected_models)
+
+        # Generate rollout error plot
+        print("\n" + "=" * 60)
+        print("📈 ROLLOUT ERROR ANALYSIS")
+        print("=" * 60)
+        from src.analysis.plot_rollout_error import plot_rollout_error
+        rollout_plot_path = progress_dir / 'plots' / 'rollout_error.png'
+        try:
+            plot_rollout_error(
+                prediction_folder=progress_dir / 'sampling',
+                model_names=selected_models,
+                output_path=rollout_plot_path,
+                metric='mse',
+                title='Autoregressive Rollout Stability (MSE vs Frame)'
+            )
+        except Exception as e:
+            print(f"  ⚠️  Rollout error plot failed: {str(e)[:100]}")
 
     # Summary
     print("\n" + "=" * 60)
