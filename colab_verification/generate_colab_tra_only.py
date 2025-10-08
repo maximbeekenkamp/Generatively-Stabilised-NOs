@@ -234,11 +234,12 @@ os.chdir(project_root)
 
 from src.core.data_processing.turbulence_dataset import TurbulenceDataset
 from src.core.data_processing.data_transformations import Transforms
-from src.core.utils.params import DataParams, TrainingParams, LossParams, ModelParamsDecoder, ModelParamsEncoder, ModelParamsLatent
+from src.core.utils.params import DataParams, TrainingParams, LossParams, SchedulerParams, ModelParamsDecoder, ModelParamsEncoder, ModelParamsLatent
 from src.core.models.model import PredictionModel
 from src.core.training.loss import PredictionLoss
 from src.core.training.trainer import Trainer
 from src.core.training.loss_history import LossHistory
+from src.core.training.flexible_loss_scheduler import FlexibleLossScheduler
 from torch.utils.data import DataLoader
 
 print("="*60)
@@ -246,7 +247,7 @@ print("📊 TRAINING MODELS (TRA ONLY)")
 print("="*60)
 
 # GPU-friendly training configuration
-EPOCHS = 50  # More epochs for GPU training (vs 3 for local CPU)
+EPOCHS = 50  # Sufficient epochs for loss scheduler to activate (needs 15+)
 BATCH_SIZE = 4  # Higher batch size for GPU (vs 1 for local CPU)
 
 # TRA configuration (matches local_tra_verification.py)
@@ -407,9 +408,28 @@ def train_model(model_name, config):
         p_t = TrainingParams(epochs=EPOCHS, lr=0.0001, expLrGamma=0.995)
 
         # Configure loss with LSIM for better perceptual quality on GPU
-        p_l = LossParams(recMSE=0.0, predMSE=1.0, predLSIM=1.0)
+        p_l = LossParams(recFieldError=0.0, predFieldError=1.0, predLSIM=1.0)
         # Optional: Enable TNO relative L2 loss
-        # p_l = LossParams(recMSE=0.0, predMSE=1.0, predLSIM=1.0, tno_lp_loss=1.0)
+        # p_l = LossParams(recFieldError=0.0, predFieldError=1.0, predLSIM=1.0, tno_lp_loss=1.0)
+
+        # Configure flexible loss scheduler for adaptive field_error → spectrum_error transition
+        p_s = SchedulerParams(
+            enabled=True,  # Enable scheduler to test adaptive loss composition
+            source_loss="field_error",
+            target_loss="spectrum_error",
+            source_components={"recFieldError": True, "predFieldError": True},
+            target_components={"spectrumError": True},
+            initial_weight_source=1.0,
+            initial_weight_target=0.0,
+            final_weight_source=0.3,
+            final_weight_target=0.7,
+            max_weight_target=0.8,
+            patience=5,
+            warmup_epochs=5,
+            min_epochs_before_adapt=10,
+            monitor_metric="spectrum_error",
+            use_ema=True
+        )
 
         # Create model params using helper function
         p_me, p_md, p_ml, deeponet_overrides = create_model_params(config)
@@ -470,14 +490,18 @@ def train_model(model_name, config):
             model_name=model_name.upper(), loss_params=p_l
         )
 
-        # Create Trainer with checkpoint support
+        # Initialize flexible loss scheduler
+        loss_scheduler = FlexibleLossScheduler(p_s) if p_s.enabled else None
+
+        # Create Trainer with checkpoint support and loss scheduler
         trainer = Trainer(
             model, train_loader, optimizer, lr_scheduler, criterion,
             train_history, writer, p_d, p_t,
             checkpoint_path=str(checkpoint_path),
             checkpoint_frequency=max(1, p_t.epochs // 5),  # Save 5 checkpoints during training
             min_epoch_for_scheduler=10,  # Start LR scheduling earlier on Colab
-            tno_teacher_forcing_ratio=config.get('tno_teacher_forcing_ratio', 0.0)  # TNO teacher forcing ratio
+            tno_teacher_forcing_ratio=config.get('tno_teacher_forcing_ratio', 0.0),  # TNO teacher forcing ratio
+            loss_scheduler=loss_scheduler  # Enable adaptive loss composition
         )
 
         print(f"     Training {p_t.epochs} epochs on {len(dataset)} samples using Trainer class...")
@@ -601,7 +625,7 @@ def sample_model(model_name: str, config: dict):
         )
 
         p_t = TrainingParams(epochs=1, lr=0.0001)
-        p_l = LossParams(recMSE=0.0, predMSE=1.0)
+        p_l = LossParams(recFieldError=0.0, predFieldError=1.0)
 
         # Load checkpoint
         checkpoint = torch.load(checkpoint_path, map_location='cuda' if torch.cuda.is_available() else 'cpu', weights_only=False)
