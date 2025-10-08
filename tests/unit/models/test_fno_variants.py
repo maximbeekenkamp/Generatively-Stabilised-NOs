@@ -195,10 +195,10 @@ class TestFNOVariants(unittest.TestCase):
         model_params = self._create_fno_params(16)
 
         # Set random seed for reproducibility
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         fno_model1 = FNOPriorAdapter(model_params, self.data_params)
 
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         fno_model2 = FNOPriorAdapter(model_params, self.data_params)
 
         input_batch, _ = get_dummy_batch("inc_low", batch_size=1)

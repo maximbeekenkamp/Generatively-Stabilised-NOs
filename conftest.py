@@ -5,16 +5,13 @@ This file configures pytest to properly handle:
 - Python path setup for imports
 - Test fixtures and dependencies
 - Matplotlib backend configuration
-- Random seed initialization
+- Random seed initialization (centralized)
 """
 
 import sys
 import os
 from pathlib import Path
 import pytest
-import torch
-import numpy as np
-import random
 
 # Add project root to Python path
 PROJECT_ROOT = Path(__file__).parent
@@ -44,12 +41,13 @@ def pytest_configure(config):
 
 @pytest.fixture(autouse=True)
 def reset_random_seeds():
-    """Reset random seeds before each test for reproducibility."""
-    torch.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(42)
+    """
+    Reset random seeds before each test for reproducibility.
+
+    Uses centralized seed management from src.core.utils.reproducibility.
+    """
+    from src.core.utils.reproducibility import set_global_seed
+    set_global_seed(verbose=False)  # Suppress output for cleaner test logs
     yield
 
 

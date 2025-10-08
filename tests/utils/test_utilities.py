@@ -655,11 +655,11 @@ class ExtendedAssertions:
                                  msg: str = "Model is not deterministic"):
         """Assert model produces deterministic outputs"""
         model.eval()
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         with torch.no_grad():
             output1 = model(input_tensor)
 
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         with torch.no_grad():
             output2 = model(input_tensor)
 

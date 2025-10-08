@@ -212,10 +212,10 @@ class TestUNetVariants(unittest.TestCase):
         model_params = self._create_unet_params("standard")
 
         # Set random seed for reproducibility
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         unet_model1 = UNetPriorAdapter(model_params, self.data_params)
 
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         unet_model2 = UNetPriorAdapter(model_params, self.data_params)
 
         input_batch, _ = get_dummy_batch("inc_low", batch_size=1)

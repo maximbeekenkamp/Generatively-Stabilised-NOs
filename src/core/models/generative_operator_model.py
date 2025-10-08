@@ -55,12 +55,38 @@ class GenerativeOperatorModel(nn.Module):
         self.correction_strength = getattr(p_md, 'correction_strength', 1.0)
 
         # DCAR configuration
+        # Default correction_frequency=1 matches NO+DM paper (correct every step)
+        # This ensures continuous spectral refinement as described in paper Section 4.2
         self.enable_dcar = kwargs.get('enable_dcar', True)
-        self.dcar_correction_frequency = kwargs.get('dcar_correction_frequency', 1)  # Correct every N steps
+        self.dcar_correction_frequency = kwargs.get('dcar_correction_frequency', 1)
+        self.correction_mode = kwargs.get('correction_mode', 'paper_accurate')
 
         # Memory optimization
         self.memory_efficient = kwargs.get('memory_efficient', True)
         self.gradient_checkpointing = kwargs.get('gradient_checkpointing', False)
+
+        # Validation and warnings
+        if self.enable_dcar:
+            if self.dcar_correction_frequency > 1:
+                logging.warning(
+                    f"DCAR correction_frequency={self.dcar_correction_frequency} > 1. "
+                    f"This deviates from the NO+DM paper (which uses frequency=1 for "
+                    f"continuous spectral refinement). For paper-accurate results, "
+                    f"set correction_frequency=1."
+                )
+
+            if self.correction_mode == 'paper_accurate' and self.dcar_correction_frequency != 1:
+                logging.error(
+                    f"Conflicting config: mode='paper_accurate' but correction_frequency="
+                    f"{self.dcar_correction_frequency}. Setting frequency to 1 to match paper."
+                )
+                self.dcar_correction_frequency = 1
+
+            logging.info(
+                f"DCAR enabled: mode={self.correction_mode}, "
+                f"correction_frequency={self.dcar_correction_frequency}, "
+                f"correction_strength={self.correction_strength}"
+            )
 
         logging.info(f"Created GenerativeOperatorModel: {type(prior_model).__name__} + {type(corrector_model).__name__}")
 
@@ -150,16 +176,47 @@ class GenerativeOperatorModel(nn.Module):
         """
         DCAR (Diffusion-Corrected AutoRegressive) rollout for long-term prediction.
 
-        This method implements the DCAR pattern where the neural operator provides
-        predictions that are corrected by the generative model at specified intervals.
+        This implements the methodology from "Neural Operators with Localized Integral
+        and Differential Kernels" where the generative model corrects the neural operator
+        prediction at each timestep to add high-frequency details and maintain spectral
+        fidelity.
+
+        **Reference Implementation**:
+        By default (correction_frequency=1), this matches the paper's DCAR algorithm
+        where correction is applied at EVERY step. This ensures continuous spectral
+        refinement as described in Section 4.2, where "the score function amplifies
+        the high frequency component as it acts as a high pass filter in reverse."
+
+        **Optimization Mode**:
+        For computational efficiency, set correction_frequency > 1 to apply correction
+        periodically. Note: This deviates from the paper and may reduce long-term
+        stability, especially for turbulent flows where high-frequency features are
+        critical.
 
         Args:
             initial_states: Initial condition [B, T_init, C, H, W]
             num_steps: Number of steps to predict
-            correction_frequency: How often to apply correction (None = every step)
+            correction_frequency: How often to apply correction
+                - 1 (default): Paper-accurate, correct every step
+                - N > 1: Optimization mode, correct every Nth step
+                - None: Uses self.dcar_correction_frequency
 
         Returns:
             trajectory: Complete trajectory [B, T_init + num_steps, C, H, W]
+
+        References:
+            - Paper: "Neural Operators with Localized Integral and Differential Kernels"
+            - Section 4.2: Score-based Diffusion Models
+            - Reference notebook: case_3_airfoil/dm/dcar_rollout.ipynb
+
+        Example:
+            >>> # Paper-accurate mode (matches reference)
+            >>> trajectory = model.dcar_rollout(initial_states, num_steps=100,
+            ...                                  correction_frequency=1)
+            >>>
+            >>> # Optimized mode (faster, deviates from paper)
+            >>> trajectory = model.dcar_rollout(initial_states, num_steps=100,
+            ...                                  correction_frequency=5)
         """
         if not self.enable_dcar:
             raise ValueError("DCAR rollout not enabled. Set enable_dcar=True")
@@ -167,6 +224,28 @@ class GenerativeOperatorModel(nn.Module):
         correction_freq = correction_frequency or self.dcar_correction_frequency
         device = initial_states.device
         B, T_init, C, H, W = initial_states.shape
+
+        # Performance warning for long rollouts with paper-accurate mode
+        if num_steps > 100 and correction_freq == 1:
+            estimated_diffusion_steps = num_steps * 32  # Assuming 32 diffusion steps per correction
+            estimated_time_sec = estimated_diffusion_steps * 0.1  # Rough estimate: 0.1s per diffusion step
+            logging.warning(
+                f"DCAR paper-accurate mode with {num_steps} steps will perform "
+                f"{estimated_diffusion_steps} diffusion steps (~{estimated_time_sec:.1f}s estimated). "
+                f"Consider using optimized mode (correction_frequency > 1) for faster results."
+            )
+
+        # Paper-accuracy confirmation
+        if correction_freq == 1:
+            logging.info(
+                "DCAR running in paper-accurate mode (correction every step). "
+                "This matches the NO+DM reference implementation."
+            )
+        else:
+            logging.info(
+                f"DCAR running in optimized mode (correction every {correction_freq} steps). "
+                f"This deviates from the paper for computational efficiency."
+            )
 
         # Initialize trajectory with initial states
         trajectory = [initial_states]

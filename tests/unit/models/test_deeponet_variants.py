@@ -213,11 +213,11 @@ class TestDeepONetVariants(unittest.TestCase):
         """Test that DeepONet models produce consistent outputs"""
         try:
             # Set random seed for reproducibility
-            torch.manual_seed(42)
+            from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
             deeponet_model1 = self._create_deeponet_model()
             deeponet_model1.eval()  # Set to eval mode
 
-            torch.manual_seed(42)
+            from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
             deeponet_model2 = self._create_deeponet_model()
             deeponet_model2.eval()  # Set to eval mode
 

@@ -17,7 +17,8 @@ class BaseModelTestCase(unittest.TestCase, ExtendedAssertions):
 
     def setUp(self):
         """Set up common test fixtures"""
-        torch.manual_seed(42)  # For reproducible tests
+        from src.core.utils.reproducibility import set_global_seed
+        set_global_seed(verbose=False)  # For reproducible tests
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     def tearDown(self):

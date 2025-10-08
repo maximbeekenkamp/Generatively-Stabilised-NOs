@@ -27,6 +27,10 @@ PROJECT_ROOT = Path(__file__).parent.parent.absolute()
 sys.path.insert(0, str(PROJECT_ROOT))
 os.chdir(PROJECT_ROOT)
 
+# Initialize reproducible random seeds
+from src.core.utils.reproducibility import set_global_seed
+set_global_seed(42)  # Reproducible results across runs
+
 # Import directly from modules to avoid __init__ dependencies
 import importlib.util
 

@@ -236,10 +236,10 @@ class TestTNOVariants(unittest.TestCase):
         model_params = self._create_tno_params(L=1, K=1)
 
         # Set random seed for reproducibility
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         tno_model1 = TNOPriorAdapter(model_params, self.data_params)
 
-        torch.manual_seed(42)
+        from src.core.utils.reproducibility import set_global_seed; set_global_seed(verbose=False)
         tno_model2 = TNOPriorAdapter(model_params, self.data_params)
 
         input_batch, _ = get_dummy_batch("inc_low", batch_size=1)

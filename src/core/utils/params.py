@@ -285,8 +285,12 @@ class SchedulerParams(object):
                  final_weight_source=0.3, final_weight_target=0.7,
                  max_weight_target=0.8,
                  # Adaptation parameters
-                 patience=5, warmup_epochs=5,
-                 adaptive_step=True, max_consecutive_adaptations=10,
+                 adaptation_trigger="plateau", patience=5, min_delta=0.001,
+                 transition_step=0.1, adaptive_step=True,
+                 min_epochs_before_adapt=10, warmup_epochs=5,
+                 max_consecutive_adaptations=10,
+                 # Transition schedule type
+                 transition_schedule="linear",
                  # Monitoring
                  monitor_metric="spectrum_error", use_ema=True, ema_beta=0.9):
 
@@ -309,10 +313,17 @@ class SchedulerParams(object):
         self.max_weight_target = max_weight_target
 
         # Adaptation parameters
+        self.adaptation_trigger = adaptation_trigger
         self.patience = patience
-        self.warmup_epochs = warmup_epochs
+        self.min_delta = min_delta
+        self.transition_step = transition_step
         self.adaptive_step = adaptive_step
+        self.min_epochs_before_adapt = min_epochs_before_adapt
+        self.warmup_epochs = warmup_epochs
         self.max_consecutive_adaptations = max_consecutive_adaptations
+
+        # Transition schedule type
+        self.transition_schedule = transition_schedule
 
         # Monitoring
         self.monitor_metric = monitor_metric
@@ -341,10 +352,17 @@ class SchedulerParams(object):
         p.max_weight_target = d.get("max_weight_target", 0.8)
 
         # Adaptation parameters
+        p.adaptation_trigger = d.get("adaptation_trigger", "plateau")
         p.patience = d.get("patience", 5)
-        p.warmup_epochs = d.get("warmup_epochs", 5)
+        p.min_delta = d.get("min_delta", 0.001)
+        p.transition_step = d.get("transition_step", 0.1)
         p.adaptive_step = d.get("adaptive_step", True)
+        p.min_epochs_before_adapt = d.get("min_epochs_before_adapt", 10)
+        p.warmup_epochs = d.get("warmup_epochs", 5)
         p.max_consecutive_adaptations = d.get("max_consecutive_adaptations", 10)
+
+        # Transition schedule type
+        p.transition_schedule = d.get("transition_schedule", "linear")
 
         # Monitoring
         p.monitor_metric = d.get("monitor_metric", "spectrum_error")
@@ -370,10 +388,16 @@ class SchedulerParams(object):
             "final_weight_target": self.final_weight_target,
             "max_weight_target": self.max_weight_target,
             # Adaptation parameters
+            "adaptation_trigger": self.adaptation_trigger,
             "patience": self.patience,
-            "warmup_epochs": self.warmup_epochs,
+            "min_delta": self.min_delta,
+            "transition_step": self.transition_step,
             "adaptive_step": self.adaptive_step,
+            "min_epochs_before_adapt": self.min_epochs_before_adapt,
+            "warmup_epochs": self.warmup_epochs,
             "max_consecutive_adaptations": self.max_consecutive_adaptations,
+            # Transition schedule type
+            "transition_schedule": self.transition_schedule,
             # Monitoring
             "monitor_metric": self.monitor_metric,
             "use_ema": self.use_ema,

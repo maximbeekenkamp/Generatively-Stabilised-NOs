@@ -302,6 +302,66 @@ plt.close()
     return str(script_path)
 
 
+def generate_spectral_analysis(
+    group_name: str,
+    models: Dict[str, str],
+    prediction_folder: str,
+    output_folder: str
+) -> bool:
+    """
+    Generate spectral analysis (energy spectrum + POD) for a model group.
+
+    Args:
+        group_name: Name of the model group
+        models: Dictionary of model names to file paths
+        prediction_folder: Path to prediction files
+        output_folder: Output directory for plots
+
+    Returns:
+        True if successful, False otherwise
+    """
+    # Extract model names (excluding "Simulation" / ground truth)
+    model_names = [name.lower().replace("-", "_").replace("+", "_").replace(" ", "_")
+                   for name in models.keys() if name.lower() != "simulation"]
+
+    if not model_names:
+        print(f"  No models to analyze for spectral analysis")
+        return False
+
+    print(f"\n📊 Generating spectral analysis for {group_name}...")
+    print(f"  Models: {', '.join(model_names)}")
+
+    # Build command
+    spectral_script = Path("src/analysis/plot_spectral_analysis.py")
+    if not spectral_script.exists():
+        print(f"  ⚠ Spectral analysis script not found: {spectral_script}")
+        return False
+
+    spectral_output = Path(output_folder) / group_name
+
+    cmd = [
+        sys.executable,
+        str(spectral_script),
+        "--progress-dir", str(Path(prediction_folder).parent),  # Parent of sampling/ dir
+        "--models", ",".join(model_names),
+        "--group-name", group_name,
+        "--output-dir", str(spectral_output),
+        "--skip-missing"  # Don't fail if some models are missing
+    ]
+
+    # Execute spectral analysis
+    import subprocess
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode == 0:
+        print(f"  ✓ Spectral analysis complete")
+        return True
+    else:
+        print(f"  ⚠ Spectral analysis encountered issues:")
+        print(result.stderr)
+        return False
+
+
 def run_plot_group(
     group_name: str,
     dataset_name: str = "zInterp",
@@ -338,6 +398,16 @@ def run_plot_group(
     if result.returncode == 0:
         print(f"✓ Successfully generated plots for {group_name}")
         print(result.stdout)
+
+        # Generate spectral analysis plots (energy spectrum + POD)
+        spectral_success = generate_spectral_analysis(
+            group_name=group_name,
+            models=models,
+            prediction_folder=prediction_folder or f"results/sampling/{dataset_name}",
+            output_folder=output_folder
+        )
+        if not spectral_success:
+            print(f"⚠ Spectral analysis skipped or failed for {group_name}")
     else:
         print(f"✗ Error generating plots for {group_name}")
         print(result.stderr)

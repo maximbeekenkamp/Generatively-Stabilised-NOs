@@ -38,5 +38,8 @@
     "log_dir": "./logs/inc/genop_fno_diffusion",
     "log_level": "INFO",
 
-    "early_stopping_patience": 50
+    "early_stopping_patience": 50,
+
+    "random_seed": 42,
+    "deterministic": true
 }

@@ -1,44 +1,5 @@
-{
-    "experiment_name": "GenOp-UNet-Diffusion-Tra",
-    "description": "Shock-aware U-Net + Diffusion generative operator for transonic flows",
+,
 
-    "model_type": "genop-unet-diffusion",
-    "correction_strength": 0.9,
-
-    "data_dir": "./data/tra",
-    "batch_size": 3,
-    "input_length": 8,
-    "output_length": 8,
-    "height": 128,
-    "width": 128,
-    "channels": 4,
-    "num_workers": 4,
-    "use_augmentation": true,
-    "shock_detection_threshold": 0.12,
-
-    "stage1_epochs": 180,
-    "stage2_epochs": 90,
-    "stage1_lr": 0.001,
-    "stage2_lr": 0.0005,
-    "enable_joint_finetuning": false,
-    "joint_finetuning_epochs": 0,
-
-    "optimizer_type": "adam",
-    "weight_decay": 0.0005,
-    "scheduler_type": "step",
-
-    "use_l1_loss": false,
-    "use_perceptual_loss": true,
-    "shock_loss_weight": 0.25,
-
-    "device": "auto",
-    "enable_gradient_checkpointing": false,
-    "use_mixed_precision": true,
-
-    "checkpoint_dir": "./checkpoints/tra/genop_unet_diffusion",
-    "checkpoint_frequency": 8,
-    "log_dir": "./logs/tra/genop_unet_diffusion",
-    "log_level": "INFO",
-
-    "early_stopping_patience": 90
+    "random_seed": 42,
+    "deterministic": true
 }

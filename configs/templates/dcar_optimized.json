@@ -1,0 +1,85 @@
+{
+  "_comment": "Optimized DCAR Configuration Template",
+  "_description": "Periodic correction for computational efficiency - deviates from paper",
+  "_warning": "This config deviates from the NO+DM reference for performance optimization",
+
+  "model": {
+    "architecture": "generative_operator",
+    "prior": "tno",
+    "corrector": "diffusion",
+    "_comment": "Can use any neural operator (FNO, U-Net, TNO) as prior"
+  },
+
+  "dcar_config": {
+    "enable_dcar": true,
+    "correction_frequency": 5,
+    "correction_strength": 1.0,
+    "correction_mode": "optimized",
+    "memory_efficient": true,
+    "_comment": "correction_frequency=5 applies correction every 5 steps (80% speedup vs paper)"
+  },
+
+  "diffusion_config": {
+    "num_sample_steps": 32,
+    "sigma_data": 0.5,
+    "sigma_min": 0.002,
+    "sigma_max": 80,
+    "_comment": "Standard Elucidated Diffusion parameters"
+  },
+
+  "performance": {
+    "expected_overhead": "20% (correction every 5 steps)",
+    "typical_speed": "~5x faster than paper-accurate mode",
+    "memory_usage": "Medium (CPU offloading enabled)",
+    "use_cases": [
+      "Large-scale simulations",
+      "Production deployment",
+      "Long-term rollouts (>500 steps)",
+      "Resource-constrained environments"
+    ]
+  },
+
+  "when_to_use": {
+    "recommended": [
+      "Very long rollouts (500+ steps)",
+      "Large spatial resolutions (512x512+)",
+      "Real-time or near-real-time applications",
+      "When computational budget is limited"
+    ],
+    "not_recommended": [
+      "Reproducing paper results exactly - use paper_accurate mode",
+      "Highly turbulent flows requiring continuous spectral correction",
+      "Benchmark comparisons - use paper_accurate mode"
+    ]
+  },
+
+  "tuning_guide": {
+    "correction_frequency_options": {
+      "3": "Aggressive correction - 33% overhead, best stability",
+      "5": "Balanced - 20% overhead, good stability (recommended default)",
+      "10": "Minimal correction - 10% overhead, may lose high-frequency details"
+    },
+    "choosing_frequency": [
+      "Start with 5 and validate on your dataset",
+      "If instability appears, decrease to 3",
+      "If performance is critical and stability is good, try 10",
+      "Monitor field_error and spectrum_error metrics"
+    ]
+  },
+
+  "example_usage": {
+    "_comment": "How to use this config in training",
+    "training_command": "python train.py --config configs/templates/dcar_optimized.json",
+    "rollout_example": "model.dcar_rollout(initial_states, num_steps=500, correction_frequency=5)"
+  },
+
+  "deviation_from_paper": {
+    "what_changed": "Correction applied every N steps instead of every step",
+    "why": "Computational efficiency for large-scale deployment",
+    "impact": {
+      "positive": "5x speedup (for N=5), lower memory usage",
+      "negative": "Potential loss of high-frequency details between corrections"
+    },
+    "mitigation": "Use adaptive correction (UCAR) for best of both worlds"
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "_comment": "Paper-Accurate DCAR Configuration Template",
+  "_description": "Matches NO+DM reference implementation exactly - correction at every step",
+  "_reference": "Neural Operators with Localized Integral and Differential Kernels, Section 4.2",
+
+  "model": {
+    "architecture": "generative_operator",
+    "prior": "tno",
+    "corrector": "diffusion",
+    "_comment": "Can use any neural operator (FNO, U-Net, TNO) as prior"
+  },
+
+  "dcar_config": {
+    "enable_dcar": true,
+    "correction_frequency": 1,
+    "correction_strength": 1.0,
+    "correction_mode": "paper_accurate",
+    "memory_efficient": false,
+    "_comment": "correction_frequency=1 ensures correction at every step (paper-accurate)"
+  },
+
+  "diffusion_config": {
+    "num_sample_steps": 32,
+    "sigma_data": 0.5,
+    "sigma_min": 0.002,
+    "sigma_max": 80,
+    "_comment": "Standard Elucidated Diffusion parameters from paper"
+  },
+
+  "performance": {
+    "expected_overhead": "100% (32 diffusion steps per timestep)",
+    "typical_speed": "~0.1-1s per timestep (depending on resolution)",
+    "memory_usage": "High (stores full trajectory)",
+    "use_cases": [
+      "Research reproduction",
+      "Benchmarking against paper results",
+      "Validation of improvements",
+      "High-accuracy long-term prediction"
+    ]
+  },
+
+  "when_to_use": {
+    "recommended": [
+      "Reproducing paper results exactly",
+      "Turbulent flow simulations where spectral fidelity is critical",
+      "Baseline for comparing optimizations",
+      "Short to medium rollouts (<100 steps)"
+    ],
+    "not_recommended": [
+      "Very long rollouts (>500 steps) - consider optimized mode",
+      "Real-time inference - use optimized or adaptive mode",
+      "Resource-constrained environments"
+    ]
+  },
+
+  "example_usage": {
+    "_comment": "How to use this config in training",
+    "training_command": "python train.py --config configs/templates/dcar_paper_accurate.json",
+    "rollout_example": "model.dcar_rollout(initial_states, num_steps=100, correction_frequency=1)"
+  }
+}
