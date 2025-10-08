@@ -13,10 +13,14 @@ NPZ Format: [num_models, num_evals, num_sequences, timesteps, channels, H, W]
 import torch
 import numpy as np
 import sys
+import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-sys.path.append(str(Path(__file__).parent / "src"))
+# Setup project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
 
 from src.core.utils.params import DataParams, ModelParamsDecoder
 from src.core.models.model import PredictionModel

@@ -12,8 +12,10 @@ matplotlib.use('Agg')  # Non-interactive backend
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-# Add src to path
-sys.path.append(os.path.join(os.path.dirname(__file__), 'src'))
+# Setup project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+os.chdir(PROJECT_ROOT)
 
 try:
     from src.core.models.neural_operator_adapters import FNOPriorAdapter, UNetPriorAdapter, TNOPriorAdapter

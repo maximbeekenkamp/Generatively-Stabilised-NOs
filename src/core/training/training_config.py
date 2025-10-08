@@ -53,7 +53,7 @@ class TrainingConfigs:
                 normalizeMode="incMixed"
             ),
             training_params=TrainingParams(epochs=1000, lr=0.0001),
-            loss_params=LossParams(recMSE=0.0, predMSE=1.0),
+            loss_params=LossParams(recFieldError=0.0, predFieldError=1.0),
             encoder_params=None,
             decoder_params=ModelParamsDecoder(arch="unet", pretrained=False, trainingNoise=0.0),
             latent_params=None,
@@ -103,7 +103,7 @@ class TrainingConfigs:
                 normalizeMode="isoSingle"
             ),
             training_params=TrainingParams(epochs=100, lr=0.0001),
-            loss_params=LossParams(recMSE=0.0, predMSE=1.0),
+            loss_params=LossParams(recFieldError=0.0, predFieldError=1.0),
             encoder_params=None,
             decoder_params=ModelParamsDecoder(arch="unet", pretrained=False, trainingNoise=0.0),
             latent_params=None,
@@ -139,7 +139,7 @@ class TrainingConfigs:
                 normalizeMode="traMixed"
             ),
             training_params=TrainingParams(epochs=1000, lr=0.0001),
-            loss_params=LossParams(recMSE=0.0, predMSE=1.0),
+            loss_params=LossParams(recFieldError=0.0, predFieldError=1.0),
             encoder_params=None,
             decoder_params=ModelParamsDecoder(arch="unet", pretrained=False, trainingNoise=0.0),
             latent_params=None,

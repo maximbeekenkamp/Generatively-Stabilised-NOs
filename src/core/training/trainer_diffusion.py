@@ -80,12 +80,17 @@ class TrainerDiffusion(object):
 
             lossParts = {
                 "lossFull" : loss,
-                "lossRecMSE" : loss,
+                "lossRecFieldError" : loss,
                 "lossRecLSIM" : torch.tensor([0]),
-                "lossPredMSE" : torch.tensor([0]),
+                "lossPredFieldError" : torch.tensor([0]),
                 "lossPredLSIM" : torch.tensor([0]),
+                "lossSpectrumError": torch.tensor([0]),
+                "lossRegMeanStd": torch.tensor([0]),
+                "lossRegDiv": torch.tensor([0]),
+                "lossRegVaeKLDiv": torch.tensor([0]),
+                "lossRegLatStep": torch.tensor([0]),
             }
-            lossSeq = {"MSE" : torch.tensor([0,0,0,0]), "LSIM" : torch.tensor([0,0,0,0])}
+            lossSeq = {"fieldError" : torch.tensor([0,0,0,0]), "LSIM" : torch.tensor([0,0,0,0]), "spectrumError": torch.tensor([0,0,0,0])}
 
             self.trainHistory.updateBatch(lossParts, lossSeq, s, (timerEnd-timerStart)/60.0)
 

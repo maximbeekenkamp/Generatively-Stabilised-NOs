@@ -330,7 +330,6 @@ class PredictionLoss(nn.modules.loss._Loss):
             "fieldError": seqFieldError,
             "LSIM": seqLSIM if seqLSIM is not None else zero_loss,
             "spectrumError": seqSpectrumError,
-            "MSE": seqMSE,  # Legacy for backward compatibility
         }
 
         return loss, lossParts, lossSeq

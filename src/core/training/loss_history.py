@@ -98,7 +98,7 @@ class LossHistory(object):
             "lossRegMeanStd": [], "lossRegDiv": [], "lossRegVaeKLDiv": [], "lossRegLatStep": [],
         }
         self.batchComparison = {
-            # Updated to use FieldError instead of MSE
+            # Field error, LSIM, and spectrum error comparisons
             "compRec1.PredfieldError": [], "compRec1.PredLSIM": [], "compRec1.PredspectrumError": [],
             "comp1.LastPredfieldError": [], "comp1.LastPredLSIM": [], "comp1.LastPredspectrumError": [],
         }
@@ -309,13 +309,11 @@ class LossHistory(object):
 
 
     def writeSequenceLoss(self, lossSeq:dict):
-        # Support both old (MSE) and new (fieldError) metrics
-        if "fieldError" in lossSeq:
-            field_error = lossSeq["fieldError"].cpu().numpy()
-        elif "MSE" in lossSeq:
-            field_error = lossSeq["MSE"].cpu().numpy()
-        else:
+        # Check for field error metric
+        if "fieldError" not in lossSeq:
             return  # No sequence data to plot
+
+        field_error = lossSeq["fieldError"].cpu().numpy()
 
         fig, ax = plt.subplots(1, figsize=(5,2), tight_layout=True)
         ax.set_ylabel("Error\n(example batch)")

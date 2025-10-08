@@ -26,9 +26,6 @@ p_l = LossParams(
     recFieldError=1.0,      # Reconstruction: per-frame relative MSE
     predFieldError=1.0,     # Prediction: per-frame relative MSE
     spectrumError=0.0,      # Spectrum error (for high-freq details)
-
-    # Legacy MSE params still work (auto-converted with warning)
-    # recMSE=1.0  →  recFieldError=1.0
 )
 ```
 
@@ -220,18 +217,17 @@ p_s.max_weight_target = 0.6              # Lower cap
 p_s.max_consecutive_adaptations = 5      # Stop earlier
 ```
 
-### Issue: Legacy configs break
+### Issue: Using old MSE parameters
 
-**Cause:** Using old `recMSE` parameter
+**Cause:** Trying to use deprecated `recMSE` or `predMSE` parameters
 
-**Solution:** Auto-conversion works, but update configs:
+**Solution:** Use the current field error parameters:
 ```python
-# Old (deprecated, still works)
-p_l = LossParams(recMSE=1.0, predMSE=1.0)
-
-# New (recommended)
+# Correct usage
 p_l = LossParams(recFieldError=1.0, predFieldError=1.0)
 ```
+
+Note: `recMSE` and `predMSE` parameters have been removed. Update any legacy configs to use `recFieldError` and `predFieldError`.
 
 ## References
 

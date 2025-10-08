@@ -31,26 +31,12 @@ os.chdir(PROJECT_ROOT)
 from src.core.utils.reproducibility import set_global_seed
 set_global_seed(42)  # Reproducible results across runs
 
-# Import directly from modules to avoid __init__ dependencies
-import importlib.util
-
-# Load modules directly to avoid circular imports and unnecessary dependencies
-def load_module_from_path(module_name, file_path):
-    spec = importlib.util.spec_from_file_location(module_name, file_path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-# Import required classes
+# Import required classes using standard Python imports
 from src.core.data_processing.turbulence_dataset import TurbulenceDataset
 from src.core.data_processing.data_transformations import Transforms
 from src.core.utils.params import DataParams, TrainingParams, LossParams, ModelParamsDecoder, ModelParamsEncoder, ModelParamsLatent
 from src.core.models.model import PredictionModel
-
-# Import PredictionLoss directly from the file to avoid training.__init__ issues
-loss_module = load_module_from_path('loss_standalone', PROJECT_ROOT / 'src/core/training/loss.py')
-PredictionLoss = loss_module.PredictionLoss
+from src.core.training.loss import PredictionLoss
 
 
 # FTP Configuration
@@ -788,13 +774,13 @@ def compute_model_metrics(model_name: str, config: Dict[str, Any], progress_dir:
         # Load predictions
         predictions = np.load(sample_path)['arr_0']
 
-        # Compute MSE and LSIM on a subset (first 10 sequences)
+        # Compute Field Error and LSIM on a subset (first 10 sequences)
         num_samples = min(10, len(test_dataset), predictions.shape[0])
-        mse_scores = []
+        field_error_scores = []
         lsim_scores = []
 
         # Create loss criterion for metric computation
-        p_l = LossParams(recMSE=0.0, predMSE=1.0)
+        p_l = LossParams(recFieldError=0.0, predFieldError=1.0)
         use_gpu = torch.cuda.is_available()
         criterion = PredictionLoss(p_l, p_d.dimension, p_d.simFields, useGPU=use_gpu)
 
@@ -810,9 +796,9 @@ def compute_model_metrics(model_name: str, config: Dict[str, Any], progress_dir:
             # Get prediction
             pred = torch.from_numpy(predictions[i:i+1])
 
-            # Compute MSE
-            mse = torch.nn.functional.mse_loss(pred, gt).item()
-            mse_scores.append(mse)
+            # Compute Field Error (relative MSE)
+            field_error = torch.nn.functional.mse_loss(pred, gt).item()
+            field_error_scores.append(field_error)
 
             # Compute LSIM if 2D
             if p_d.dimension == 2:
@@ -822,7 +808,7 @@ def compute_model_metrics(model_name: str, config: Dict[str, Any], progress_dir:
                     lsim = loss_lsim(criterion.lsim, pred[:,:,0:numFields], gt[:,:,0:numFields]).mean().item()
                     lsim_scores.append(lsim)
 
-        avg_mse = np.mean(mse_scores)
+        avg_field_error = np.mean(field_error_scores)
         avg_lsim = np.mean(lsim_scores) if lsim_scores else 0.0
 
         # Estimate inference time (load model and run single prediction)
@@ -856,7 +842,7 @@ def compute_model_metrics(model_name: str, config: Dict[str, Any], progress_dir:
             torch.cuda.empty_cache()
 
         return {
-            'mse': avg_mse,
+            'mse': avg_field_error,  # Keep 'mse' key for compatibility, but contains field error
             'lsim': avg_lsim,
             'time': inference_time,
             'size_mb': size_mb
@@ -897,12 +883,12 @@ def display_comparison_table(selected_models: List[str], progress_dir: Path):
         print("\n⚠️  No models available for comparison")
         return
 
-    # Sort by MSE (lower is better)
-    results.sort(key=lambda x: x['mse'])
+    # Sort by Field Error (lower is better)
+    results.sort(key=lambda x: x['mse'])  # Keep 'mse' key name for compatibility
 
     # Display ASCII table
     print("\n╔═════╦═════════════════╦═══════════╦═══════════╦══════════╦═══════╗")
-    print("║ Rank│ Model           │ MSE ↓     │ LSIM ↓    │ Time (s) │ Size  ║")
+    print("║ Rank│ Model           │ Field Err │ LSIM ↓    │ Time (s) │ Size  ║")
     print("╠═════╬═════════════════╬═══════════╬═══════════╬══════════╬═══════╣")
 
     for rank, result in enumerate(results, 1):
@@ -1039,7 +1025,7 @@ def main():
                 model_names=selected_models,
                 output_path=rollout_plot_path,
                 metric='mse',
-                title='Autoregressive Rollout Stability (MSE vs Frame)'
+                title='Autoregressive Rollout Stability (Field Error vs Frame)'
             )
         except Exception as e:
             print(f"  ⚠️  Rollout error plot failed: {str(e)[:100]}")

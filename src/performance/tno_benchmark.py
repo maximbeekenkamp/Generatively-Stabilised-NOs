@@ -23,12 +23,11 @@ from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import gc
 
-# Add source paths
-sys.path.append('src/core')
-sys.path.append('src/analysis')
-sys.path.append('src/performance')
+# Setup project root and paths
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-from tno_performance_memory import TNOMemoryOptimizer, TNOPerformanceProfiler
+from src.performance.tno_performance_memory import TNOMemoryOptimizer, TNOPerformanceProfiler
 
 class TNOBenchmarkSuite:
     """

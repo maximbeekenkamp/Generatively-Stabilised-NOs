@@ -166,7 +166,7 @@ class TrainingParams(object):
 
 class LossParams(object):
     def __init__(self,
-                 # Primary training losses (NEW - field error replaces MSE)
+                 # Primary training losses
                  recFieldError=1.0, predFieldError=1.0, spectrumError=0.0,
                  # Perceptual loss
                  recLSIM=0.0, predLSIM=0.0,
@@ -174,9 +174,7 @@ class LossParams(object):
                  extraMSEvelZ=0, regMeanStd=0, regDiv=0, regVae=0, regLatStep=0,
                  # Generative operator loss parameters
                  diffusion_loss_weight=1.0, consistency_loss_weight=0.1, prior_loss_weight=1.0,
-                 adversarial_loss_weight=0.0, perceptual_loss_weight=0.0,
-                 # Legacy MSE support (backward compatibility - will be deprecated)
-                 recMSE=None, predMSE=None):
+                 adversarial_loss_weight=0.0, perceptual_loss_weight=0.0):
 
         # Primary training losses (field error is default)
         self.recFieldError  = recFieldError  # field error reconstruction weight (per-frame relative MSE)
@@ -201,20 +199,12 @@ class LossParams(object):
         self.adversarial_loss_weight = adversarial_loss_weight  # weight for adversarial loss (future GAN support)
         self.perceptual_loss_weight = perceptual_loss_weight  # weight for perceptual loss (future enhancement)
 
-        # Legacy MSE support (backward compatibility - auto-convert to field error)
-        if recMSE is not None:
-            self.recFieldError = recMSE
-            print("Warning: recMSE is deprecated, use recFieldError instead. Auto-converting...")
-        if predMSE is not None:
-            self.predFieldError = predMSE
-            print("Warning: predMSE is deprecated, use predFieldError instead. Auto-converting...")
-
     @classmethod
     def fromDict(cls, d:dict):
         p = cls()
-        # Primary training losses (NEW - field error replaces MSE)
-        p.recFieldError  = d.get("recFieldError", d.get("recMSE", 1.0))  # Auto-convert legacy recMSE
-        p.predFieldError = d.get("predFieldError", d.get("predMSE", 1.0))  # Auto-convert legacy predMSE
+        # Primary training losses
+        p.recFieldError  = d.get("recFieldError", 1.0)
+        p.predFieldError = d.get("predFieldError", 1.0)
         p.spectrumError  = d.get("spectrumError", 0.0)
 
         # Perceptual loss

@@ -126,8 +126,8 @@ class ConfigLoader:
         )
 
         loss_params = LossParams(
-            recMSE=loss_params_yaml.get('reconstruction_mse', 0.0),
-            predMSE=loss_params_yaml.get('prediction_mse', 1.0),
+            recFieldError=loss_params_yaml.get('reconstruction_field_error', loss_params_yaml.get('reconstruction_mse', 1.0)),
+            predFieldError=loss_params_yaml.get('prediction_field_error', loss_params_yaml.get('prediction_mse', 1.0)),
             recLSIM=loss_params_yaml.get('reconstruction_lsim', 0.0),
             predLSIM=loss_params_yaml.get('prediction_lsim', 0.0)
         )

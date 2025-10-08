@@ -813,7 +813,7 @@ try:
         model_names=list(MODELS.keys()),
         output_path=rollout_plot_path,
         metric='mse',
-        title='Autoregressive Rollout Stability (MSE vs Frame)'
+        title='Autoregressive Rollout Stability (Field Error vs Frame)'
     )
     print(f"\\n✅ Rollout error plot saved: {rollout_plot_path}")
 
