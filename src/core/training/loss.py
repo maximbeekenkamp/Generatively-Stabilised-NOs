@@ -7,16 +7,15 @@ import operator
 from functools import reduce
 
 from src.core.utils.lsim.distance_model import DistanceModel as LSIM_Model
-
 from src.core.utils.params import LossParams
 
-# TNO LpLoss2 integration - Phase 1.3
-try:
-    from .lploss import LpLoss2Adaptive, create_relative_l2_loss
-    LPLOSS2_AVAILABLE = True
-except ImportError:
-    LPLOSS2_AVAILABLE = False
-    print("Warning: LpLoss2 not available. TNO-specific loss functions disabled.")
+# Spectral metrics for turbulence validation and training
+from .spectral_metrics import (
+    compute_field_error_loss,
+    compute_spectrum_error_loss,
+    compute_field_error_validation,
+    compute_spectrum_error_validation
+)
 
 
 # input shape: B S C W H -> output shape: B S C
@@ -69,23 +68,35 @@ class PredictionLoss(nn.modules.loss._Loss):
         self.useGPU = useGPU
 
         if self.dimension == 2:
-            # load lsim
+            # load lsim (frozen network, gradients flow through)
             self.lsim = LSIM_Model(baseType="lsim", isTrain=False, useGPU=self.useGPU)
             self.lsim.load("src/core/utils/lsim/models/LSiM.pth")
             self.lsim.eval()
-            # freeze lsim weights
+            # freeze lsim weights (but gradients still flow to prediction)
             for param in self.lsim.parameters():
                 param.requires_grad = False
-        
-        # TNO LpLoss2 initialization - Phase 1.3
-        if LPLOSS2_AVAILABLE and hasattr(p_l, 'tno_lp_loss') and p_l.tno_lp_loss > 0:
-            self.tno_lp_loss = create_relative_l2_loss()
-            self.tno_lp_weight = p_l.tno_lp_loss
-            self.tno_transition_weight = getattr(p_l, 'tno_transition_weight', 0.1)
-        else:
-            self.tno_lp_loss = None
-            self.tno_lp_weight = 0
-            self.tno_transition_weight = 0
+
+        # Component weights for flexible loss scheduling
+        # Default: 100% field error (replaces old MSE-based defaults)
+        self.component_weights = {
+            'recFieldError': getattr(p_l, 'recFieldError', 1.0),
+            'predFieldError': getattr(p_l, 'predFieldError', 1.0),
+            'recLSIM': getattr(p_l, 'recLSIM', 0.0),
+            'predLSIM': getattr(p_l, 'predLSIM', 0.0),
+            'spectrumError': getattr(p_l, 'spectrumError', 0.0),
+        }
+
+    def set_loss_weights(self, weights: dict):
+        """
+        Set component weights for flexible loss scheduling.
+
+        Called by FlexibleLossScheduler to dynamically adjust loss composition.
+
+        Args:
+            weights: Dict mapping component names to weights
+                     e.g., {'recFieldError': 0.7, 'spectrumError': 0.3}
+        """
+        self.component_weights.update(weights)
 
 
     def forward(self, prediction:torch.Tensor, groundTruth:torch.Tensor, latentSpace:torch.Tensor, vaeMeanVar:Tuple[torch.Tensor, torch.Tensor],
@@ -98,91 +109,150 @@ class PredictionLoss(nn.modules.loss._Loss):
             # Diffusion loss: MSE between actual noise and predicted noise
             loss = F.mse_loss(predictedNoise, noise)
 
-            # Return complete lossParts dict matching expected format
+            # Return complete lossParts dict matching new component format
             zero_loss = torch.zeros(1).to(device)
             lossParts = {
                 'lossFull': loss,
-                'lossRecMSE': zero_loss,
+                'lossRecFieldError': zero_loss,
+                'lossPredFieldError': loss,  # Treat diffusion as prediction task
                 'lossRecLSIM': zero_loss,
-                'lossPredMSE': loss,
                 'lossPredLSIM': zero_loss,
-                'lossTNO': zero_loss,
+                'lossSpectrumError': zero_loss,
             }
-            lossSeq = {'MSE': zero_loss, 'LSIM': zero_loss}
+            lossSeq = {'fieldError': zero_loss, 'LSIM': zero_loss, 'spectrumError': zero_loss}
             return loss, lossParts, lossSeq
 
-        assert(not ((self.p_l.predMSE > 0) and prediction.shape[1] <= 1)), "Sequence length to small for prediction errors!"
+        # Check sequence length for prediction losses
+        pred_weight = self.component_weights.get('predFieldError', 0) + self.component_weights.get('predLSIM', 0)
+        assert(not (pred_weight > 0 and prediction.shape[1] <= 1)), "Sequence length too small for prediction errors!"
 
+        # Unweighted mode: Compute all metrics for validation logging
         if not weighted:
+            numFields = self.dimension + len(self.simFields)
+            zero_loss = torch.zeros(1).to(device)
+
+            # Compute field error (replaces MSE as primary metric)
+            # Use per-frame relative error for better turbulence stability
+            rec_field_err_val = compute_field_error_validation(
+                prediction[:, 0:1], groundTruth[:, 0:1]
+            )
+            lossRecFieldError = torch.tensor([rec_field_err_val]).to(device)
+
+            if prediction.shape[1] > 1:
+                pred_field_err_val = compute_field_error_validation(
+                    prediction[:, 1:], groundTruth[:, 1:]
+                )
+                lossPredFieldError = torch.tensor([pred_field_err_val]).to(device)
+            else:
+                lossPredFieldError = zero_loss
+
+            # Compute spectrum error for spectral bias validation
+            spec_err_val = compute_spectrum_error_validation(
+                prediction, groundTruth
+            )
+            lossSpectrumError = torch.tensor([spec_err_val]).to(device)
+
+            # Compute LSIM (only on fields, only for 2D)
+            if not noLSIM and self.dimension == 2:
+                seqLSIM = loss_lsim(self.lsim, prediction[:,:,0:numFields],
+                                    groundTruth[:,:,0:numFields]).mean((0,2))
+                lossRecLSIM = seqLSIM[0:1]  # Keep as tensor
+                lossPredLSIM = torch.mean(seqLSIM[1:]).unsqueeze(0) if len(seqLSIM) > 1 else zero_loss
+            else:
+                seqLSIM = torch.zeros(prediction.shape[1]).to(device)
+                lossRecLSIM = zero_loss
+                lossPredLSIM = zero_loss
+
+            # Regularization terms (not computed in unweighted mode)
+            lossRegMeanStd = zero_loss
+            lossRegDiv = zero_loss
+            lossRegVaeKLDiv = zero_loss
+            lossRegLatStep = zero_loss
+
+            # Legacy MSE for backward compatibility (still useful for monitoring)
             if self.dimension == 2:
                 seqMSE = F.mse_loss(prediction, groundTruth, reduction="none").mean((0,2,3,4))
             elif self.dimension == 3:
                 seqMSE = F.mse_loss(prediction, groundTruth, reduction="none").mean((0,2,3,4,5))
-            lossRecMSE = seqMSE[0]
-            lossPredMSE = torch.mean(seqMSE[1:])
-
-            # only compute lsim loss on fields and ignore scalar simulation parameters
-            numFields = self.dimension + len(self.simFields)
-            if not noLSIM and self.dimension == 2:
-                seqLSIM = loss_lsim(self.lsim, prediction[:,:,0:numFields], groundTruth[:,:,0:numFields]).mean((0,2))
             else:
-                seqLSIM = torch.zeros(prediction.shape[0]).to(device)
-                lossRecLSIM = torch.zeros(1).to(device)
-                lossPredLSIM = torch.zeros(1).to(device)
+                seqMSE = zero_loss
 
-            lossRecLSIM = seqLSIM[0]
-            lossPredLSIM = torch.mean(seqLSIM[1:])
+            # Sequence-level metrics for detailed logging
+            seqFieldError = torch.tensor([rec_field_err_val, pred_field_err_val if prediction.shape[1] > 1 else 0.0]).to(device)
+            seqSpectrumError = torch.tensor([spec_err_val, spec_err_val]).to(device)
 
-            lossRegMeanStd = torch.zeros(1).to(device) # not required in unweighted
-            lossRegDiv = torch.zeros(1).to(device) # not required in unweighted
-            lossRegVaeKLDiv = torch.zeros(1).to(device) # not required in unweighted
-            lossRegLatStep = torch.zeros(1).to(device) # not required in unweighted
-
+        # Weighted mode: Compute losses with component weights for training
         else:
-            lossRecMSE = torch.zeros(1).to(device)
-            lossPredMSE = torch.zeros(1).to(device)
-            lossRecLSIM = torch.zeros(1).to(device)
-            lossPredLSIM = torch.zeros(1).to(device)
-            lossRegMeanStd = torch.zeros(1).to(device)
-            lossRegDiv = torch.zeros(1).to(device)
-            lossRegVaeKLDiv = torch.zeros(1).to(device)
-            lossRegLatStep = torch.zeros(1).to(device)
+            numFields = self.dimension + len(self.simFields)
+            zero_loss = torch.zeros(1).to(device)
 
+            # Initialize all loss components
+            lossRecFieldError = zero_loss
+            lossPredFieldError = zero_loss
+            lossRecLSIM = zero_loss
+            lossPredLSIM = zero_loss
+            lossSpectrumError = zero_loss
+            lossRegMeanStd = zero_loss
+            lossRegDiv = zero_loss
+            lossRegVaeKLDiv = zero_loss
+            lossRegLatStep = zero_loss
+
+            # ========================================================================
+            # FIELD ERROR: Primary training loss (replaces MSE)
+            # ========================================================================
+            if self.component_weights.get('recFieldError', 0) > 0:
+                rec_field_err = compute_field_error_loss(
+                    prediction[:, 0:1], groundTruth[:, 0:1]
+                )
+                lossRecFieldError = self.component_weights['recFieldError'] * rec_field_err
+
+            if self.component_weights.get('predFieldError', 0) > 0 and fadePredWeight > 0:
+                pred_field_err = compute_field_error_loss(
+                    prediction[:, 1:], groundTruth[:, 1:]
+                )
+                lossPredFieldError = (self.component_weights['predFieldError'] *
+                                     fadePredWeight * pred_field_err)
+
+            # ========================================================================
+            # SPECTRUM ERROR: For spectral bias mitigation
+            # ========================================================================
+            if self.component_weights.get('spectrumError', 0) > 0:
+                spec_err = compute_spectrum_error_loss(prediction, groundTruth)
+                lossSpectrumError = self.component_weights['spectrumError'] * spec_err
+
+            # ========================================================================
+            # LSIM: Perceptual loss (2D only, frozen network)
+            # ========================================================================
+            seqLSIM = None
             if self.dimension == 2:
-                seqMSE = F.mse_loss(prediction, groundTruth, reduction="none").mean((0,2,3,4))
-            elif self.dimension == 3:
-                seqMSE = F.mse_loss(prediction, groundTruth, reduction="none").mean((0,3,4,5))
-                if self.p_l.extraMSEvelZ > 0:
-                    seqMSE[:,2:3] = self.p_l.extraMSEvelZ * seqMSE[:,2:3]
-                seqMSE = torch.mean(seqMSE, dim=1)
+                # Compute LSIM based on which components are active
+                rec_lsim_active = self.component_weights.get('recLSIM', 0) > 0
+                pred_lsim_active = self.component_weights.get('predLSIM', 0) > 0
 
-            if self.p_l.recMSE > 0:
-                lossRecMSE = self.p_l.recMSE * seqMSE[0]
-
-            if self.p_l.predMSE > 0 and fadePredWeight > 0:
-                lossPredMSE = self.p_l.predMSE * fadePredWeight * torch.mean(seqMSE[1:])
-
-            # only compute lsim loss on fields and ignore scalar simulation parameters
-            if self.dimension == 2:
-                numFields = self.dimension + len(self.simFields)
-                seqLSIM = None
-                if self.p_l.predLSIM > 0:
-                    if self.p_l.recLSIM > 0:
-                        seqLSIM = loss_lsim(self.lsim, prediction[:,:,0:numFields], groundTruth[:,:,0:numFields]).mean((0,2))
-
+                if pred_lsim_active:
+                    if rec_lsim_active:
+                        # Compute for all timesteps
+                        seqLSIM = loss_lsim(self.lsim, prediction[:,:,0:numFields],
+                                           groundTruth[:,:,0:numFields]).mean((0,2))
                     else:
+                        # Skip early timesteps if ignorePredLSIMSteps > 0
                         predLSIMStart = 1 + ignorePredLSIMSteps
-                        seqLSIM = loss_lsim(self.lsim, prediction[:,predLSIMStart:,0:numFields], groundTruth[:,predLSIMStart:,0:numFields]).mean((0,2))
+                        seqLSIM = loss_lsim(self.lsim, prediction[:,predLSIMStart:,0:numFields],
+                                           groundTruth[:,predLSIMStart:,0:numFields]).mean((0,2))
                         seqLSIM = torch.concat([torch.zeros(predLSIMStart, device=device), seqLSIM])
 
-                elif self.p_l.recLSIM > 0:
-                    seqLSIM = loss_lsim(self.lsim, prediction[:,0:1,0:numFields], groundTruth[:,0:1,0:numFields]).mean((0,2))
+                elif rec_lsim_active:
+                    # Only reconstruction timestep
+                    seqLSIM = loss_lsim(self.lsim, prediction[:,0:1,0:numFields],
+                                       groundTruth[:,0:1,0:numFields]).mean((0,2))
 
-                if self.p_l.recLSIM > 0:
-                    lossRecLSIM = self.p_l.recLSIM * seqLSIM[0]
+                # Apply weights
+                if rec_lsim_active and seqLSIM is not None:
+                    lossRecLSIM = self.component_weights['recLSIM'] * seqLSIM[0]
 
-                if self.p_l.predLSIM > 0 and fadePredWeight > 0:
-                    lossPredLSIM = self.p_l.predLSIM * fadePredWeight * torch.mean(seqLSIM[1:])
+                if pred_lsim_active and fadePredWeight > 0 and seqLSIM is not None:
+                    lossPredLSIM = (self.component_weights['predLSIM'] *
+                                   fadePredWeight * torch.mean(seqLSIM[1:]))
 
 
             # mean and std regularization
@@ -221,29 +291,48 @@ class PredictionLoss(nn.modules.loss._Loss):
                 latFirst = latentSpace[:,0:latentSpace.shape[1]-1]
                 latSecond = latentSpace[:,1:latentSpace.shape[1]]
                 lossRegLatStep = self.p_l.regLatStep * torch.mean(torch.abs(latFirst - latSecond))
-        
-        # TNO LpLoss2 computation - Phase 1.3
-        lossTNO = torch.zeros(1).to(device)
-        if self.tno_lp_loss is not None and self.tno_lp_weight > 0:
-            # Apply TNO loss to physical fields only (exclude simulation parameters)
-            numFields = self.dimension + len(self.simFields)
-            pred_fields = prediction[:, :, 0:numFields]
-            gt_fields = groundTruth[:, :, 0:numFields]
-            
-            # Compute TNO relative L2 loss
-            lossTNO = self.tno_lp_loss(pred_fields, gt_fields)
-            lossTNO = self.tno_lp_weight * lossTNO
 
-        loss = lossRecMSE + lossRecLSIM + lossPredMSE + lossPredLSIM + lossRegMeanStd + lossRegDiv + lossRegVaeKLDiv + lossRegLatStep + lossTNO
+            # Legacy MSE for backward compatibility (not weighted, just for monitoring)
+            if self.dimension == 2:
+                seqMSE = F.mse_loss(prediction, groundTruth, reduction="none").mean((0,2,3,4))
+            elif self.dimension == 3:
+                seqMSE = F.mse_loss(prediction, groundTruth, reduction="none").mean((0,2,3,4,5))
+            else:
+                seqMSE = zero_loss
+
+            # Compute unweighted field/spectrum errors for sequence logging
+            seqFieldError = zero_loss
+            seqSpectrumError = zero_loss
+
+        # ========================================================================
+        # TOTAL LOSS: Sum all weighted components
+        # ========================================================================
+        loss = (lossRecFieldError + lossPredFieldError +
+                lossRecLSIM + lossPredLSIM +
+                lossSpectrumError +
+                lossRegMeanStd + lossRegDiv + lossRegVaeKLDiv + lossRegLatStep)
+
         lossParts = {
-            "lossFull" : loss,
-            "lossRecMSE" : lossRecMSE,
-            "lossRecLSIM" : lossRecLSIM,
-            "lossPredMSE" : lossPredMSE,
-            "lossPredLSIM" : lossPredLSIM,
-            "lossTNO" : lossTNO,  # TNO LpLoss2 - Phase 1.3
+            "lossFull": loss,
+            "lossRecFieldError": lossRecFieldError,
+            "lossPredFieldError": lossPredFieldError,
+            "lossRecLSIM": lossRecLSIM,
+            "lossPredLSIM": lossPredLSIM,
+            "lossSpectrumError": lossSpectrumError,
+            # Regularization terms (for monitoring)
+            "lossRegMeanStd": lossRegMeanStd,
+            "lossRegDiv": lossRegDiv,
+            "lossRegVaeKLDiv": lossRegVaeKLDiv,
+            "lossRegLatStep": lossRegLatStep,
         }
-        lossSeq = {"MSE" : seqMSE, "LSIM" : seqLSIM}
+
+        lossSeq = {
+            "fieldError": seqFieldError,
+            "LSIM": seqLSIM if seqLSIM is not None else zero_loss,
+            "spectrumError": seqSpectrumError,
+            "MSE": seqMSE,  # Legacy for backward compatibility
+        }
+
         return loss, lossParts, lossSeq
 
 

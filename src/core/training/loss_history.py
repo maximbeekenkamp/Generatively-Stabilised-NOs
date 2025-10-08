@@ -89,13 +89,18 @@ class LossHistory(object):
 
     def clear(self):
         self.batchLoss = {
-            "lossFull" : [], "lossRecMSE" : [], "lossRecLSIM" : [],
-            "lossPredMSE" : [], "lossPredLSIM" : [],
-            "lossTNO" : [],  # TNO relative L2 loss
+            "lossFull": [],
+            # Primary training losses (NEW - field error replaces MSE)
+            "lossRecFieldError": [], "lossPredFieldError": [], "lossSpectrumError": [],
+            # Perceptual loss
+            "lossRecLSIM": [], "lossPredLSIM": [],
+            # Regularization terms
+            "lossRegMeanStd": [], "lossRegDiv": [], "lossRegVaeKLDiv": [], "lossRegLatStep": [],
         }
         self.batchComparison = {
-            "compRec1.PredMSE" : [], "compRec1.PredLSIM" : [],
-            "comp1.LastPredMSE" : [], "comp1.LastPredLSIM" : []
+            # Updated to use FieldError instead of MSE
+            "compRec1.PredfieldError": [], "compRec1.PredLSIM": [], "compRec1.PredspectrumError": [],
+            "comp1.LastPredfieldError": [], "comp1.LastPredLSIM": [], "comp1.LastPredspectrumError": [],
         }
 
 
@@ -177,16 +182,19 @@ class LossHistory(object):
                 # Filter out losses that are not in use (weight == 0)
                 should_include = True
                 if self.loss_params is not None:
-                    # Map loss name to loss_params attribute
-                    if name == "lossRecMSE" and self.loss_params.recMSE <= 0:
+                    # Map loss name to loss_params attribute (NEW - field error components)
+                    if name == "lossRecFieldError" and getattr(self.loss_params, 'recFieldError', 0) <= 0:
                         should_include = False
-                    elif name == "lossRecLSIM" and self.loss_params.recLSIM <= 0:
+                    elif name == "lossPredFieldError" and getattr(self.loss_params, 'predFieldError', 0) <= 0:
                         should_include = False
-                    elif name == "lossPredMSE" and self.loss_params.predMSE <= 0:
+                    elif name == "lossSpectrumError" and getattr(self.loss_params, 'spectrumError', 0) <= 0:
                         should_include = False
-                    elif name == "lossPredLSIM" and self.loss_params.predLSIM <= 0:
+                    elif name == "lossRecLSIM" and getattr(self.loss_params, 'recLSIM', 0) <= 0:
                         should_include = False
-                    elif name == "lossTNO" and self.loss_params.tno_lp_loss <= 0:
+                    elif name == "lossPredLSIM" and getattr(self.loss_params, 'predLSIM', 0) <= 0:
+                        should_include = False
+                    # Regularization terms - always show if non-zero
+                    elif name.startswith("lossReg") and part <= 1e-6:
                         should_include = False
 
                 if should_include:
@@ -301,22 +309,62 @@ class LossHistory(object):
 
 
     def writeSequenceLoss(self, lossSeq:dict):
-        mse = lossSeq["MSE"].cpu().numpy()
-        if lossSeq["LSIM"] != None:
-            lsim = lossSeq["LSIM"].cpu().numpy()
+        # Support both old (MSE) and new (fieldError) metrics
+        if "fieldError" in lossSeq:
+            field_error = lossSeq["fieldError"].cpu().numpy()
+        elif "MSE" in lossSeq:
+            field_error = lossSeq["MSE"].cpu().numpy()
+        else:
+            return  # No sequence data to plot
 
         fig, ax = plt.subplots(1, figsize=(5,2), tight_layout=True)
         ax.set_ylabel("Error\n(example batch)")
         ax.set_xlabel('Sequence Step')
-        #ax.set_ylim([0.0,5.0])
         ax.yaxis.grid(True)
         ax.set_axisbelow(True)
-        ax.plot(np.arange(mse.shape[0]), mse, linewidth=1.5, color="r", label="MSE")
-        if lossSeq["LSIM"] != None:
+
+        # Plot field error (primary metric)
+        ax.plot(np.arange(field_error.shape[0]), field_error, linewidth=1.5, color="r", label="Field Error")
+
+        # Plot LSIM if available
+        if lossSeq.get("LSIM") is not None:
+            lsim = lossSeq["LSIM"].cpu().numpy()
             ax.plot(np.arange(lsim.shape[0]), lsim, color="b", label="LSIM")
 
-        ax.legend()
+        # Plot spectrum error if available
+        if "spectrumError" in lossSeq and lossSeq["spectrumError"] is not None:
+            spectrum_error = lossSeq["spectrumError"].cpu().numpy()
+            ax.plot(np.arange(spectrum_error.shape[0]), spectrum_error, linewidth=1.5, color="g", label="Spectrum Error")
 
+        ax.legend()
         self.writer.add_figure("%s_PredictionImg/errorSequence" % (self.mode), fig, self.epoch)
+
+
+    def get_validation_metrics(self) -> dict:
+        """
+        Extract validation metrics for loss scheduler.
+
+        Returns dict with metrics like {'field_error': 0.1, 'spectrum_error': 0.05, 'lsim': 0.02}
+        Used by FlexibleLossScheduler to monitor validation performance.
+        """
+        metrics = {}
+
+        # Extract field error (primary metric)
+        if "l_rFieldError" in self.accuracy:
+            metrics["field_error"] = self.accuracy["l_rFieldError"]
+        elif "l_pFieldError" in self.accuracy:
+            metrics["field_error"] = self.accuracy["l_pFieldError"]
+
+        # Extract spectrum error (for spectral bias monitoring)
+        if "l_SpectrumError" in self.accuracy:
+            metrics["spectrum_error"] = self.accuracy["l_SpectrumError"]
+
+        # Extract LSIM (perceptual quality)
+        if "l_rLSIM" in self.accuracy:
+            metrics["lsim"] = self.accuracy["l_rLSIM"]
+        elif "l_pLSIM" in self.accuracy:
+            metrics["lsim"] = self.accuracy["l_pLSIM"]
+
+        return metrics
 
 

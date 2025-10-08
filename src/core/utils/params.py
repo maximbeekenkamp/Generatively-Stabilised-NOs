@@ -165,25 +165,34 @@ class TrainingParams(object):
 
 
 class LossParams(object):
-    def __init__(self, recMSE=1.0, recLSIM=0, predMSE=1.0, predLSIM=0, extraMSEvelZ=0, regMeanStd=0, regDiv=0, regVae=0, regLatStep=0,
-                 tno_lp_loss=0.0, tno_transition_weight=0.1,
+    def __init__(self,
+                 # Primary training losses (NEW - field error replaces MSE)
+                 recFieldError=1.0, predFieldError=1.0, spectrumError=0.0,
+                 # Perceptual loss
+                 recLSIM=0.0, predLSIM=0.0,
+                 # Regularization
+                 extraMSEvelZ=0, regMeanStd=0, regDiv=0, regVae=0, regLatStep=0,
                  # Generative operator loss parameters
                  diffusion_loss_weight=1.0, consistency_loss_weight=0.1, prior_loss_weight=1.0,
-                 adversarial_loss_weight=0.0, perceptual_loss_weight=0.0):
+                 adversarial_loss_weight=0.0, perceptual_loss_weight=0.0,
+                 # Legacy MSE support (backward compatibility - will be deprecated)
+                 recMSE=None, predMSE=None):
 
-        # Standard loss parameters
-        self.recMSE       = recMSE       # mse loss reconstruction weight
+        # Primary training losses (field error is default)
+        self.recFieldError  = recFieldError  # field error reconstruction weight (per-frame relative MSE)
+        self.predFieldError = predFieldError # field error prediction weight
+        self.spectrumError  = spectrumError  # spectrum error weight (for spectral bias mitigation)
+
+        # Perceptual loss (LSIM - frozen VGG-like network)
         self.recLSIM      = recLSIM      # lsim loss reconstruction weight
-        self.predMSE      = predMSE      # mse loss prediction weight
         self.predLSIM     = predLSIM     # lsim loss prediction weight
+
+        # Regularization
+        self.extraMSEvelZ = extraMSEvelZ # extra weight for Z-velocity in 3D (legacy)
         self.regMeanStd   = regMeanStd   # mean and standard deviation regularization weight
         self.regDiv       = regDiv       # divergence regularization weight
         self.regVae       = regVae       # regularization weight for VAE KL divergence
         self.regLatStep   = regLatStep   # latent space step regularization weight
-
-        # TNO-specific loss parameters - Phase 1.3
-        self.tno_lp_loss = tno_lp_loss   # TNO relative LpLoss2 weight
-        self.tno_transition_weight = tno_transition_weight  # Weight for gradual phase transitions
 
         # Generative operator loss parameters
         self.diffusion_loss_weight = diffusion_loss_weight    # weight for diffusion model loss
@@ -192,22 +201,32 @@ class LossParams(object):
         self.adversarial_loss_weight = adversarial_loss_weight  # weight for adversarial loss (future GAN support)
         self.perceptual_loss_weight = perceptual_loss_weight  # weight for perceptual loss (future enhancement)
 
+        # Legacy MSE support (backward compatibility - auto-convert to field error)
+        if recMSE is not None:
+            self.recFieldError = recMSE
+            print("Warning: recMSE is deprecated, use recFieldError instead. Auto-converting...")
+        if predMSE is not None:
+            self.predFieldError = predMSE
+            print("Warning: predMSE is deprecated, use predFieldError instead. Auto-converting...")
+
     @classmethod
     def fromDict(cls, d:dict):
         p = cls()
-        # Standard loss parameters
-        p.recMSE       = d.get("recMSE", -1)
-        p.recLSIM      = d.get("recLSIM", -1)
-        p.predMSE      = d.get("predMSE", -1)
-        p.predLSIM     = d.get("predLSIM", -1)
-        p.regMeanStd   = d.get("regMeanStd", -1)
-        p.regDiv       = d.get("regDiv", -1)
-        p.regVae       = d.get("regVae", -1)
-        p.regLatStep   = d.get("regLatStep", -1)
+        # Primary training losses (NEW - field error replaces MSE)
+        p.recFieldError  = d.get("recFieldError", d.get("recMSE", 1.0))  # Auto-convert legacy recMSE
+        p.predFieldError = d.get("predFieldError", d.get("predMSE", 1.0))  # Auto-convert legacy predMSE
+        p.spectrumError  = d.get("spectrumError", 0.0)
 
-        # TNO-specific parameters - Phase 1.3
-        p.tno_lp_loss  = d.get("tno_lp_loss", 0.0)
-        p.tno_transition_weight = d.get("tno_transition_weight", 0.1)
+        # Perceptual loss
+        p.recLSIM      = d.get("recLSIM", 0.0)
+        p.predLSIM     = d.get("predLSIM", 0.0)
+
+        # Regularization
+        p.extraMSEvelZ = d.get("extraMSEvelZ", 0)
+        p.regMeanStd   = d.get("regMeanStd", 0.0)
+        p.regDiv       = d.get("regDiv", 0.0)
+        p.regVae       = d.get("regVae", 0.0)
+        p.regLatStep   = d.get("regLatStep", 0.0)
 
         # Generative operator loss parameters
         p.diffusion_loss_weight = d.get("diffusion_loss_weight", 1.0)
@@ -220,32 +239,146 @@ class LossParams(object):
 
     def asDict(self) -> dict:
         result = {
-            # Standard loss parameters
-            "recMSE"       : self.recMSE,
+            # Primary training losses (NEW - field error replaces MSE)
+            "recFieldError"  : self.recFieldError,
+            "predFieldError" : self.predFieldError,
+            "spectrumError"  : self.spectrumError,
+
+            # Perceptual loss
             "recLSIM"      : self.recLSIM,
-            "predMSE"      : self.predMSE,
             "predLSIM"     : self.predLSIM,
+
+            # Regularization
+            "extraMSEvelZ" : self.extraMSEvelZ,
             "regMeanStd"   : self.regMeanStd,
             "regDiv"       : self.regDiv,
             "regVae"       : self.regVae,
             "regLatStep"   : self.regLatStep,
 
-            # TNO-specific parameters - Phase 1.3
-            "tno_lp_loss"  : self.tno_lp_loss,
-            "tno_transition_weight" : self.tno_transition_weight,
+            # Generative operator parameters
+            "diffusion_loss_weight": self.diffusion_loss_weight,
+            "consistency_loss_weight": self.consistency_loss_weight,
+            "prior_loss_weight": self.prior_loss_weight,
+            "adversarial_loss_weight": self.adversarial_loss_weight,
+            "perceptual_loss_weight": self.perceptual_loss_weight,
         }
 
-        # Add generative operator parameters if they exist (for backward compatibility)
-        if hasattr(self, 'diffusion_loss_weight'):
-            result.update({
-                "diffusion_loss_weight": self.diffusion_loss_weight,
-                "consistency_loss_weight": self.consistency_loss_weight,
-                "prior_loss_weight": self.prior_loss_weight,
-                "adversarial_loss_weight": self.adversarial_loss_weight,
-                "perceptual_loss_weight": self.perceptual_loss_weight,
-            })
-
         return result
+
+
+
+class SchedulerParams(object):
+    """
+    Parameters for Flexible Loss Scheduler - adaptive loss composition during training.
+
+    Enables smooth transitions between different loss formulations (e.g., field_error → spectrum_error)
+    based on validation plateau detection. Useful for mitigating spectral bias in turbulence forecasting.
+    """
+    def __init__(self,
+                 enabled=False,
+                 # Loss specification
+                 source_loss="field_error", target_loss="spectrum_error",
+                 # Component mapping
+                 source_components=None, target_components=None, static_components=None,
+                 # Weight progression (conservative defaults)
+                 initial_weight_source=1.0, initial_weight_target=0.0,
+                 final_weight_source=0.3, final_weight_target=0.7,
+                 max_weight_target=0.8,
+                 # Adaptation parameters
+                 patience=5, warmup_epochs=5,
+                 adaptive_step=True, max_consecutive_adaptations=10,
+                 # Monitoring
+                 monitor_metric="spectrum_error", use_ema=True, ema_beta=0.9):
+
+        self.enabled = enabled
+
+        # Loss specification
+        self.source_loss = source_loss
+        self.target_loss = target_loss
+
+        # Component mapping (defaults set in FlexibleLossScheduler if None)
+        self.source_components = source_components or {"recFieldError": True, "predFieldError": True}
+        self.target_components = target_components or {"spectrumError": True}
+        self.static_components = static_components or {}
+
+        # Weight progression
+        self.initial_weight_source = initial_weight_source
+        self.initial_weight_target = initial_weight_target
+        self.final_weight_source = final_weight_source
+        self.final_weight_target = final_weight_target
+        self.max_weight_target = max_weight_target
+
+        # Adaptation parameters
+        self.patience = patience
+        self.warmup_epochs = warmup_epochs
+        self.adaptive_step = adaptive_step
+        self.max_consecutive_adaptations = max_consecutive_adaptations
+
+        # Monitoring
+        self.monitor_metric = monitor_metric
+        self.use_ema = use_ema
+        self.ema_beta = ema_beta
+
+    @classmethod
+    def fromDict(cls, d:dict):
+        p = cls()
+        p.enabled = d.get("enabled", False)
+
+        # Loss specification
+        p.source_loss = d.get("source_loss", "field_error")
+        p.target_loss = d.get("target_loss", "spectrum_error")
+
+        # Component mapping
+        p.source_components = d.get("source_components", {"recFieldError": True, "predFieldError": True})
+        p.target_components = d.get("target_components", {"spectrumError": True})
+        p.static_components = d.get("static_components", {})
+
+        # Weight progression
+        p.initial_weight_source = d.get("initial_weight_source", 1.0)
+        p.initial_weight_target = d.get("initial_weight_target", 0.0)
+        p.final_weight_source = d.get("final_weight_source", 0.3)
+        p.final_weight_target = d.get("final_weight_target", 0.7)
+        p.max_weight_target = d.get("max_weight_target", 0.8)
+
+        # Adaptation parameters
+        p.patience = d.get("patience", 5)
+        p.warmup_epochs = d.get("warmup_epochs", 5)
+        p.adaptive_step = d.get("adaptive_step", True)
+        p.max_consecutive_adaptations = d.get("max_consecutive_adaptations", 10)
+
+        # Monitoring
+        p.monitor_metric = d.get("monitor_metric", "spectrum_error")
+        p.use_ema = d.get("use_ema", True)
+        p.ema_beta = d.get("ema_beta", 0.9)
+
+        return p
+
+    def asDict(self) -> dict:
+        return {
+            "enabled": self.enabled,
+            # Loss specification
+            "source_loss": self.source_loss,
+            "target_loss": self.target_loss,
+            # Component mapping
+            "source_components": self.source_components,
+            "target_components": self.target_components,
+            "static_components": self.static_components,
+            # Weight progression
+            "initial_weight_source": self.initial_weight_source,
+            "initial_weight_target": self.initial_weight_target,
+            "final_weight_source": self.final_weight_source,
+            "final_weight_target": self.final_weight_target,
+            "max_weight_target": self.max_weight_target,
+            # Adaptation parameters
+            "patience": self.patience,
+            "warmup_epochs": self.warmup_epochs,
+            "adaptive_step": self.adaptive_step,
+            "max_consecutive_adaptations": self.max_consecutive_adaptations,
+            # Monitoring
+            "monitor_metric": self.monitor_metric,
+            "use_ema": self.use_ema,
+            "ema_beta": self.ema_beta,
+        }
 
 
 

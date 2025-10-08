@@ -12,6 +12,7 @@ from torch.cuda.amp import GradScaler
 from src.core.models.model import PredictionModel
 from src.core.training.loss import PredictionLoss
 from src.core.training.loss_history import LossHistory
+from src.core.training.flexible_loss_scheduler import FlexibleLossScheduler
 from src.core.utils.params import DataParams, TrainingParams
 
 
@@ -27,7 +28,8 @@ class Trainer(object):
 
     def __init__(self, model:PredictionModel, trainLoader:DataLoader, optimizer:Optimizer, lrScheduler:_LRScheduler,
             criterion:PredictionLoss, trainHistory:LossHistory, writer:SummaryWriter, p_d:DataParams, p_t:TrainingParams,
-            checkpoint_path:str=None, checkpoint_frequency:int=None, min_epoch_for_scheduler:int=50, tno_teacher_forcing_ratio:float=0.0):
+            checkpoint_path:str=None, checkpoint_frequency:int=None, min_epoch_for_scheduler:int=50, tno_teacher_forcing_ratio:float=0.0,
+            loss_scheduler:FlexibleLossScheduler=None):
         self.model = model
         self.trainLoader = trainLoader
         self.optimizer = optimizer
@@ -40,6 +42,12 @@ class Trainer(object):
         self.checkpoint_path = checkpoint_path
         self.checkpoint_frequency = checkpoint_frequency if checkpoint_frequency is not None else 50
         self.min_epoch_for_scheduler = min_epoch_for_scheduler
+
+        # Flexible loss scheduler for adaptive loss composition
+        self.loss_scheduler = loss_scheduler
+        if self.loss_scheduler is not None:
+            print(f"[Trainer] Flexible loss scheduler enabled: {loss_scheduler.config.source_loss} → {loss_scheduler.config.target_loss}")
+            logging.info(f"Flexible loss scheduler enabled: {loss_scheduler.config.source_loss} → {loss_scheduler.config.target_loss}")
 
         # Mixed precision training - available to all subclasses
         self.use_amp = torch.cuda.is_available()
@@ -116,6 +124,42 @@ class Trainer(object):
         else:
             loss.backward()
             self.optimizer.step()
+
+    def update_loss_scheduler(self, epoch: int, validation_metrics: dict):
+        """
+        Update flexible loss scheduler with validation metrics.
+
+        Called from main training loop after validation step to adaptively
+        adjust loss composition based on validation performance.
+
+        Args:
+            epoch: Current training epoch
+            validation_metrics: Dict of validation metrics (e.g., {'field_error': 0.1, 'spectrum_error': 0.05})
+        """
+        if self.loss_scheduler is None:
+            return
+
+        # Update scheduler with validation metrics
+        adapted = self.loss_scheduler.step(epoch, validation_metrics)
+
+        if adapted:
+            # Get new weights and update criterion
+            new_weights = self.loss_scheduler.get_loss_weights()
+            self.criterion.set_loss_weights(new_weights)
+
+            # Log the adaptation
+            source = self.loss_scheduler.config.source_loss
+            target = self.loss_scheduler.config.target_loss
+            monitor = self.loss_scheduler.config.monitor_metric
+
+            print(f"[Loss Scheduler] Epoch {epoch}: Adapted loss weights (plateau in {monitor})")
+            print(f"  Current progress: {source} {self.loss_scheduler.current_weight_source:.2f} → {target} {self.loss_scheduler.current_weight_target:.2f}")
+            logging.info(f"Loss scheduler adapted at epoch {epoch}: {source} {self.loss_scheduler.current_weight_source:.2f} → {target} {self.loss_scheduler.current_weight_target:.2f}")
+
+            # Log to tensorboard if available
+            if hasattr(self, 'writer') and self.writer is not None:
+                for component, weight in new_weights.items():
+                    self.writer.add_scalar(f'LossScheduler/{component}', weight, epoch)
 
     # run one epoch of training
     def trainingStep(self, epoch:int):
