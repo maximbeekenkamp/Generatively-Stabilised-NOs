@@ -58,8 +58,6 @@ class Trainer(object):
         self.scaler = GradScaler() if self.use_amp else None
         if self.use_amp:
             print(f"[Trainer] Mixed precision (AMP) enabled")
-        elif torch.cuda.is_available() and not enable_amp:
-            print(f"[Trainer] Mixed precision (AMP) disabled (complex operations not supported)")
 
         # TNO teacher forcing configuration - calculate epochs from ratio
         if tno_teacher_forcing_ratio > 0:

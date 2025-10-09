@@ -408,7 +408,9 @@ def train_model(model_name, config):
         )
 
         # GPU-friendly training parameters: higher epochs, batch size, and learning rate decay
-        p_t = TrainingParams(epochs=EPOCHS, lr=0.0001, expLrGamma=0.995)
+        # Model-specific learning rates (TNO uses higher LR based on reference implementations)
+        lr = 0.0005 if 'tno' in model_name else 0.0001  # TNO: 5e-4 (reference), Others: 1e-4
+        p_t = TrainingParams(epochs=EPOCHS, lr=lr, expLrGamma=0.995)
 
         # Configure loss with LSIM for better perceptual quality on GPU
         p_l = LossParams(recFieldError=0.0, predFieldError=1.0, predLSIM=1.0)

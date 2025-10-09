@@ -17,6 +17,12 @@ from src.core.models.model_latent_transformer import (
 from src.core.models.model_refiner import PDERefiner
 from src.core.models.model_resnet import DilatedResNet
 from src.core.models.model_tno import TNOModel
+from src.core.models.deeponet.deeponet_config import DeepONetConfig
+from src.core.models.deeponet.mlp_networks import DeepONet as StandardDeepONet
+from src.core.models.deeponet.deeponet_adapter import DeepONetFormatAdapter as DeepONetWrapper
+from src.core.models.deepokan.deepokan_config import DeepOKANConfig
+from src.core.models.deepokan.deepokan_base import DeepOKAN
+from src.core.models.deepokan.deepokan_adapter import DeepOKANFormatAdapter as DeepOKANWrapper
 from src.core.utils.params import (DataParams, LossParams, ModelParamsDecoder,
                              ModelParamsEncoder, ModelParamsLatent,
                              TrainingParams)
@@ -140,11 +146,35 @@ class PredictionModel(nn.Module):
 
                 print(f"Initialized DeepONet: latent_dim={deeponet_config.latent_dim}, n_sensors={deeponet_config.n_sensors}, prev_steps={deeponet_prev_steps}")
 
+            elif self.p_md.arch in ["deepokan", "deepokan+Prev", "deepokan+2Prev", "deepokan+3Prev"]:
+                # DeepOKAN (Deep Operator Network with KAN layers) architecture
+                # Determine prev_steps from architecture name
+                deepokan_prev_steps = get_prev_steps_from_arch(self.p_md)
+
+                # Create DeepOKAN configuration from parameters
+                deepokan_config = DeepOKANConfig.from_params(self.p_md, self.p_d)
+
+                # Spatial dimensions
+                H, W = self.p_d.dataSize[-2], self.p_d.dataSize[-1]
+
+                # Create base DeepOKAN model
+                base_deepokan = DeepOKAN(deepokan_config)
+
+                # Wrap with format adapter for Gen Stabilised compatibility
+                self.modelDecoder = DeepOKANWrapper(
+                    deepokan_model=base_deepokan,
+                    spatial_dims=(H, W),
+                    num_channels=self.p_d.dimension + len(self.p_d.simFields)
+                )
+
+                print(f"Initialized DeepOKAN: HD={deepokan_config.HD}, sensor_dim={deepokan_config.sensor_dim}, grid_count={deepokan_config.grid_count}")
+
             elif self.p_md.arch in ["genop", "genop+Prev", "genop+2Prev", "genop+3Prev",
                                     "genop-fno-diffusion", "genop-fno-diffusion+Prev", "genop-fno-diffusion+2Prev", "genop-fno-diffusion+3Prev",
                                     "genop-tno-diffusion", "genop-tno-diffusion+Prev", "genop-tno-diffusion+2Prev", "genop-tno-diffusion+3Prev",
                                     "genop-unet-diffusion", "genop-unet-diffusion+Prev", "genop-unet-diffusion+2Prev", "genop-unet-diffusion+3Prev",
                                     "genop-deeponet-diffusion", "genop-deeponet-diffusion+Prev", "genop-deeponet-diffusion+2Prev", "genop-deeponet-diffusion+3Prev",
+                                    "genop-deepokan-diffusion", "genop-deepokan-diffusion+Prev", "genop-deepokan-diffusion+2Prev", "genop-deepokan-diffusion+3Prev",
                                     "nodm", "nodm+Prev", "nodm+2Prev", "nodm+3Prev"]:
 
                 # Import generative operator components

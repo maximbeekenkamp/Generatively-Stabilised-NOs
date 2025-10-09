@@ -217,8 +217,17 @@ class LossHistory(object):
                 # Only complete the task for per-epoch progress bars
                 self.progress.update(self.task_id, completed=self.dataLoaderLength, loss_text=f"Loss: {loss:.4f}")
 
-        # Only print every 5th epoch (or first epoch)
-        if (self.epoch + 1) % 5 == 0 or self.epoch == 0:
+        # Check if this is the final epoch
+        is_final_epoch = (self.total_epochs is not None and self.epoch == self.total_epochs - 1)
+
+        # On final epoch, force include spectrum error if available
+        if is_final_epoch and 'lossSpectrumError' in self.batchLoss:
+            if 'SpectrumError' not in partStr:
+                spectrum_val = np.mean(self.batchLoss['lossSpectrumError'])
+                partStr += "SpectrumError %1.3f " % spectrum_val
+
+        # Only print every 5th epoch (or first epoch, or final epoch)
+        if (self.epoch + 1) % 5 == 0 or self.epoch == 0 or is_final_epoch:
             print("%s Epoch %d (%2.2f min): %1.4f    %s" % (self.modeLong, self.epoch+1, timeMin, loss, partStr))
             print("")
             logging.info("%s Epoch %d (%2.2f min): %1.4f    %s" % (self.modeLong, self.epoch+1, timeMin, loss, partStr))
