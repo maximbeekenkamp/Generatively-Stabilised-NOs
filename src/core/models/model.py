@@ -142,13 +142,15 @@ class PredictionModel(nn.Module):
                 branch_net = MLP(branch_in, branch_out, branch_hidden, branch_layers)
                 trunk_net = MLP(trunk_in, trunk_out, trunk_hidden, trunk_layers)
 
-                # Calculate output channels (number of fields to predict)
+                # Calculate number of channels (for adapter initialization)
                 num_output_channels = self.p_d.dimension + len(self.p_d.simFields)
 
-                # Create base DeepONet with correct signature
+                # Create base DeepONet with out_features=1 (adapter handles multi-channel processing)
+                # IMPORTANT: Each channel is processed independently by the adapter,
+                # so DeepONet outputs a single value per query point
                 base_deeponet = StandardDeepONet(
                     latent_features=deeponet_config.latent_features,
-                    out_features=num_output_channels,
+                    out_features=1,  # Single output per channel (adapter loops over channels)
                     branch=branch_net,
                     trunk=trunk_net
                 )
@@ -453,6 +455,14 @@ class PredictionModel(nn.Module):
 
             elif isinstance(self.modelDecoder, DeepONetWrapper):
                 # DeepONet forward path
+                if stepsLong > 0 and (not self.training):
+                    prediction = self.forwardDirectLongGPUEfficient(d, steps=stepsLong)
+                else:
+                    prediction = self.forwardDirect(d)
+                return prediction, None, (None, None)
+
+            elif isinstance(self.modelDecoder, DeepOKANWrapper):
+                # DeepOKAN forward path
                 if stepsLong > 0 and (not self.training):
                     prediction = self.forwardDirectLongGPUEfficient(d, steps=stepsLong)
                 else:

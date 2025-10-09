@@ -68,7 +68,7 @@ class DeepONetFormatAdapter(nn.Module):
 
         return self._coord_cache
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, simParams: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Forward pass: Convert [B,C,H,W] to branch-trunk format, process, and convert back.
 
@@ -82,6 +82,7 @@ class DeepONetFormatAdapter(nn.Module):
 
         Args:
             x: Input tensor [B, C, H, W] - single timestep
+            simParams: Optional simulation parameters (not used by DeepONet, but required for interface compatibility)
 
         Returns:
             pred: Prediction tensor [B, C, H, W]

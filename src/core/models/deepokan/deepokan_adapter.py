@@ -12,7 +12,7 @@ Critical architectural difference from DeepONet:
 
 import torch
 import torch.nn as nn
-from typing import Tuple
+from typing import Tuple, Optional
 
 
 class DeepOKANFormatAdapter(nn.Module):
@@ -40,7 +40,7 @@ class DeepOKANFormatAdapter(nn.Module):
         self.num_channels = num_channels
         self._coord_cache = None
 
-    def _get_coordinates(self, H: int, W: int, device: torch.device) -> torch.Tensor:
+    def _get_coordinates(self, H: int, W: int, device: torch.device, dtype: torch.dtype = None) -> torch.Tensor:
         """
         Generate shared coordinate grid for trunk network.
 
@@ -53,14 +53,19 @@ class DeepOKANFormatAdapter(nn.Module):
             H: Height of spatial grid
             W: Width of spatial grid
             device: Device to place coordinates on
+            dtype: Data type for coordinates (defaults to float64 for DeepOKAN internal precision)
 
         Returns:
             coords: Coordinate tensor [H*W, 2] - SHARED, not batched!
         """
-        if self._coord_cache is None or self._coord_cache.device != device:
+        # Use float64 by default for DeepOKAN (KAN benefits from higher precision)
+        if dtype is None:
+            dtype = torch.float64
+
+        if self._coord_cache is None or self._coord_cache.device != device or self._coord_cache.dtype != dtype:
             # Normalize to [0, 1] range (matches reference implementation)
-            x = torch.linspace(0, 1, W, device=device)
-            y = torch.linspace(0, 1, H, device=device)
+            x = torch.linspace(0, 1, W, device=device, dtype=dtype)
+            y = torch.linspace(0, 1, H, device=device, dtype=dtype)
             yy, xx = torch.meshgrid(y, x, indexing='ij')
 
             # Flatten to [H*W, 2] - NO batch dimension!
@@ -69,7 +74,7 @@ class DeepOKANFormatAdapter(nn.Module):
 
         return self._coord_cache
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, simParams: Optional[torch.Tensor] = None) -> torch.Tensor:
         """
         Forward pass: Convert [B,C,H,W] to branch-trunk format with shared trunk.
 
@@ -82,25 +87,29 @@ class DeepOKANFormatAdapter(nn.Module):
 
         Args:
             x: Input tensor [B, C, H, W] - single timestep
+            simParams: Optional simulation parameters (not used by DeepOKAN, but required for interface compatibility)
 
         Returns:
             pred: Prediction tensor [B, C, H, W]
         """
         B, C, H, W = x.shape
         device = x.device
+        input_dtype = x.dtype  # Save input dtype for output conversion
 
         # Generate shared trunk coordinates [H*W, 2] - NOT batched!
-        trunk_input = self._get_coordinates(H, W, device)
+        # Use float64 for DeepOKAN internal precision
+        trunk_input = self._get_coordinates(H, W, device, dtype=torch.float64)
 
         # Process each channel separately
         channel_outputs = []
         for c in range(min(C, self.num_channels)):
             # Branch input: [B, C, H, W] → [B, H*W] for this channel
-            branch_input = x[:, c, :, :].reshape(B, -1)
+            # Convert to float64 for KAN internal processing
+            branch_input = x[:, c, :, :].reshape(B, -1).to(torch.float64)
 
             # DeepOKAN forward pass
             # Input: branch [B, H*W], trunk [H*W, 2] (shared!)
-            # Output: [B, H*W, 1]
+            # Output: [B, H*W, 1] in float64
             output = self.deepokan(branch_input, trunk_input)
 
             # Remove output channel dimension: [B, H*W, 1] → [B, H*W]
@@ -116,6 +125,11 @@ class DeepOKANFormatAdapter(nn.Module):
         if C > self.num_channels:
             # Keep original parameter channels unchanged
             output = torch.cat([output, x[:, self.num_channels:]], dim=1)
+
+        # Ensure output matches input dtype for framework compatibility
+        # DeepOKAN uses float64 internally for KAN stability, but output must match input
+        if output.dtype != input_dtype:
+            output = output.to(input_dtype)
 
         return output
 
