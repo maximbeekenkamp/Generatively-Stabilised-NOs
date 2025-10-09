@@ -494,6 +494,7 @@ def train_model(model_name, config):
         loss_scheduler = FlexibleLossScheduler(p_s) if p_s.enabled else None
 
         # Create Trainer with checkpoint support and loss scheduler
+        # Note: torch.compile disabled for Colab (compilation takes 10+ min for complex models)
         trainer = Trainer(
             model, train_loader, optimizer, lr_scheduler, criterion,
             train_history, writer, p_d, p_t,
@@ -501,7 +502,8 @@ def train_model(model_name, config):
             checkpoint_frequency=max(1, p_t.epochs // 5),  # Save 5 checkpoints during training
             min_epoch_for_scheduler=10,  # Start LR scheduling earlier on Colab
             tno_teacher_forcing_ratio=config.get('tno_teacher_forcing_ratio', 0.0),  # TNO teacher forcing ratio
-            loss_scheduler=loss_scheduler  # Enable adaptive loss composition
+            loss_scheduler=loss_scheduler,  # Enable adaptive loss composition
+            enable_compile=False  # Disable torch.compile for faster startup on Colab
         )
 
         print(f"     Training {p_t.epochs} epochs on {len(dataset)} samples using Trainer class...")
