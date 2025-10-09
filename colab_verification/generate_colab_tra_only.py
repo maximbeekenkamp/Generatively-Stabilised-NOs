@@ -264,7 +264,7 @@ TRA_CONFIG = {
 MODELS = {
     # Neural Operators (Standalone)
     'fno': {'arch': 'fno', 'dec_width': 56, 'fno_modes': (16, 8)},
-    'tno': {'arch': 'tno+Prev', 'dec_width': 256, 'tno_teacher_forcing_ratio': 0.6},  # L=2, K=4, 60% teacher forcing
+    'tno': {'arch': 'tno+Prev', 'dec_width': 360, 'tno_teacher_forcing_ratio': 0.6},  # L=2, K=4, 60% teacher forcing, width=360 (reference)
     'unet': {'arch': 'unet', 'dec_width': 96},
     'deeponet': {'arch': 'deeponet', 'dec_width': 96, 'n_sensors': 392,
                  'branch_batch_norm': True, 'trunk_batch_norm': True},
@@ -273,7 +273,7 @@ MODELS = {
     # Neural Operators + Diffusion Models (Generative Operators) - Stage 1: prior-only training
     'fno_dm': {'arch': 'genop-fno-diffusion', 'dec_width': 56, 'fno_modes': (16, 8), 'diff_steps': 20, 'training_stage': 1,
                'load_pretrained_prior': True, 'prior_checkpoint_key': 'fno_tra'},
-    'tno_dm': {'arch': 'genop-tno-diffusion+Prev', 'dec_width': 256, 'diff_steps': 20, 'training_stage': 1,
+    'tno_dm': {'arch': 'genop-tno-diffusion+Prev', 'dec_width': 360, 'diff_steps': 20, 'training_stage': 1,
                'load_pretrained_prior': True, 'prior_checkpoint_key': 'tno_tra', 'tno_teacher_forcing_ratio': 0.6},
     'unet_dm': {'arch': 'genop-unet-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1,
                 'load_pretrained_prior': True, 'prior_checkpoint_key': 'unet_tra'},

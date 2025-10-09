@@ -18,7 +18,7 @@ from src.core.models.model_refiner import PDERefiner
 from src.core.models.model_resnet import DilatedResNet
 from src.core.models.model_tno import TNOModel
 from src.core.models.deeponet.deeponet_config import DeepONetConfig
-from src.core.models.deeponet.mlp_networks import DeepONet as StandardDeepONet
+from src.core.models.deeponet.mlp_networks import DeepONet as StandardDeepONet, MLP
 from src.core.models.deeponet.deeponet_adapter import DeepONetFormatAdapter as DeepONetWrapper
 from src.core.models.deepokan.deepokan_config import DeepOKANConfig
 from src.core.models.deepokan.deepokan_base import DeepOKAN
@@ -134,17 +134,33 @@ class PredictionModel(nn.Module):
                 # Spatial dimensions
                 H, W = self.p_d.dataSize[-2], self.p_d.dataSize[-1]
 
-                # Create base DeepONet model
-                base_deeponet = StandardDeepONet(deeponet_config, self.p_md, self.p_d)
+                # Get network configurations from config
+                branch_in, branch_out, branch_hidden, branch_layers = deeponet_config.get_branch_config()
+                trunk_in, trunk_out, trunk_hidden, trunk_layers = deeponet_config.get_trunk_config()
+
+                # Create branch and trunk MLP networks
+                branch_net = MLP(branch_in, branch_out, branch_hidden, branch_layers)
+                trunk_net = MLP(trunk_in, trunk_out, trunk_hidden, trunk_layers)
+
+                # Calculate output channels (number of fields to predict)
+                num_output_channels = self.p_d.dimension + len(self.p_d.simFields)
+
+                # Create base DeepONet with correct signature
+                base_deeponet = StandardDeepONet(
+                    latent_features=deeponet_config.latent_features,
+                    out_features=num_output_channels,
+                    branch=branch_net,
+                    trunk=trunk_net
+                )
 
                 # Wrap with format adapter for Gen Stabilised compatibility
                 self.modelDecoder = DeepONetWrapper(
                     deeponet_model=base_deeponet,
                     spatial_dims=(H, W),
-                    coordinate_dim=2  # 2D spatial coordinates
+                    num_channels=num_output_channels
                 )
 
-                print(f"Initialized DeepONet: latent_dim={deeponet_config.latent_dim}, n_sensors={deeponet_config.n_sensors}, prev_steps={deeponet_prev_steps}")
+                print(f"Initialized DeepONet: latent_dim={deeponet_config.latent_features}, n_sensors={deeponet_config.sensor_dim_per_channel}, prev_steps={deeponet_prev_steps}")
 
             elif self.p_md.arch in ["deepokan", "deepokan+Prev", "deepokan+2Prev", "deepokan+3Prev"]:
                 # DeepOKAN (Deep Operator Network with KAN layers) architecture
@@ -367,6 +383,7 @@ class PredictionModel(nn.Module):
                 "dfp", "dfp+Prev", "dfp+2Prev", "dfp+3Prev",
                 "tno", "tno+Prev", "tno+2Prev", "tno+3Prev",
                 "deeponet", "deeponet+Prev", "deeponet+2Prev", "deeponet+3Prev",
+                "deepokan", "deepokan+Prev", "deepokan+2Prev", "deepokan+3Prev",
                 "refiner",
                 "direct-ddpm", "direct-ddim", "direct-ddpm+First", "direct-ddim+First",
                 "direct-ddpm+Prev", "direct-ddim+Prev", "direct-ddpm+2Prev", "direct-ddim+2Prev",
@@ -377,6 +394,7 @@ class PredictionModel(nn.Module):
                 "genop-tno-diffusion", "genop-tno-diffusion+Prev", "genop-tno-diffusion+2Prev", "genop-tno-diffusion+3Prev",
                 "genop-unet-diffusion", "genop-unet-diffusion+Prev", "genop-unet-diffusion+2Prev", "genop-unet-diffusion+3Prev",
                 "genop-deeponet-diffusion", "genop-deeponet-diffusion+Prev", "genop-deeponet-diffusion+2Prev", "genop-deeponet-diffusion+3Prev",
+                "genop-deepokan-diffusion", "genop-deepokan-diffusion+Prev", "genop-deepokan-diffusion+2Prev", "genop-deepokan-diffusion+3Prev",
                 "nodm", "nodm+Prev", "nodm+2Prev", "nodm+3Prev"]):
 
             latentSpace = torch.zeros(d.shape[0], d.shape[1], self.p_me.latentSize)
