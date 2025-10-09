@@ -22,11 +22,13 @@ colorRemap = {
 "FNO": "tab:olive",
 "TNO": mpl.colormaps["tab20"].resampled(20)(range(20))[5],
 "DeepONet": mpl.colormaps["tab20"].resampled(20)(range(20))[11],
+"DeepOKAN": mpl.colormaps["tab20"].resampled(20)(range(20))[13],
 
 "FNO+DM": mpl.colormaps["Oranges"].resampled(10)(range(10))[6],
 "TNO+DM": mpl.colormaps["Purples"].resampled(10)(range(10))[6],
 "UNet+DM": mpl.colormaps["Blues"].resampled(10)(range(10))[7],
 "DeepONet+DM": mpl.colormaps["Greens"].resampled(10)(range(10))[6],
+"DeepOKAN+DM": mpl.colormaps["Reds"].resampled(10)(range(10))[6],
 
 "DFP": "chartreuse",
 "DFP-ACDM": "tan",
@@ -104,11 +106,13 @@ modelRemap = {
 "FNO": r"$\mathit{FNO}$",
 "TNO": r"$\mathit{TNO}$",
 "DeepONet": r"$\mathit{DeepONet}$",
+"DeepOKAN": r"$\mathit{DeepOKAN}$",
 
 "FNO+DM": r"$\mathit{FNO{+}DM}$",
 "TNO+DM": r"$\mathit{TNO{+}DM}$",
 "UNet+DM": r"$\mathit{UNet{+}DM}$",
 "DeepONet+DM": r"$\mathit{DeepONet{+}DM}$",
+"DeepOKAN+DM": r"$\mathit{DeepOKAN{+}DM}$",
 
 "DFP": r"$\mathit{DFP}$",
 "DFP-ACDM": r"$\mathit{DFP}_{\mathit{ACDM}}$",

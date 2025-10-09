@@ -55,9 +55,9 @@ notebook["cells"].append(create_cell("markdown", """# TRA-Only Colab Verificatio
 
 **Purpose**: Verify ALL models work with real TRA turbulence data
 
-**Models Tested** (13 total):
-- **Neural Operators (4)**: FNO, TNO, UNet, DeepONet
-- **NO + Diffusion (4)**: FNO+DM, TNO+DM, UNet+DM, DeepONet+DM
+**Models Tested** (15 total):
+- **Neural Operators (5)**: FNO, TNO, UNet, DeepONet, DeepOKAN
+- **NO + Diffusion (5)**: FNO+DM, TNO+DM, UNet+DM, DeepONet+DM, DeepOKAN+DM
 - **Legacy Deterministic (3)**: ResNet, Dil-ResNet, Latent-MGN
 - **Legacy Diffusion (2)**: ACDM, Refiner
 
@@ -68,7 +68,7 @@ notebook["cells"].append(create_cell("markdown", """# TRA-Only Colab Verificatio
 - Tests complete pipeline: download → train → checkpoints
 - Verifies all model architectures work
 
-**Expected Runtime**: ~4-6 hours on T4 GPU (13 models × 50 epochs)"""))
+**Expected Runtime**: ~5-7 hours on T4 GPU (15 models × 50 epochs)"""))
 
 # Cell 0: Clean Slate
 notebook["cells"].append(create_cell("markdown", """## Cell 0: Clean Slate (Optional)
@@ -212,15 +212,15 @@ print("="*60)"""))
 # Cell 4: Train Models (TRA only)
 notebook["cells"].append(create_cell("markdown", """## Training Phase
 
-Training ALL 13 models on TRA dataset:
-- **Neural Operators (4)**: FNO, TNO, UNet, DeepONet
-- **NO + Diffusion (4)**: FNO+DM, TNO+DM, UNet+DM, DeepONet+DM
+Training ALL 15 models on TRA dataset:
+- **Neural Operators (5)**: FNO, TNO, UNet, DeepONet, DeepOKAN
+- **NO + Diffusion (5)**: FNO+DM, TNO+DM, UNet+DM, DeepONet+DM, DeepOKAN+DM
 - **Legacy Deterministic (3)**: ResNet, Dil-ResNet, Latent-MGN
 - **Legacy Diffusion (2)**: ACDM, Refiner
 
 Each model trains for 50 epochs on full dataset with batch size 4.
 
-**Total**: 13 models × 50 epochs ≈ 4-6 hours on T4 GPU"""))
+**Total**: 15 models × 50 epochs ≈ 5-7 hours on T4 GPU"""))
 
 notebook["cells"].append(create_cell("code", """# Cell 4: Train Models (TRA Only)
 import sys
@@ -260,7 +260,7 @@ TRA_CONFIG = {
     'normalize_mode': 'machMixed'  # Autoreg uses machMixed, not traMixed
 }
 
-# Models to test (13 models matching local_tra_verification.py)
+# Models to test (15 models including DeepOKAN)
 MODELS = {
     # Neural Operators (Standalone)
     'fno': {'arch': 'fno', 'dec_width': 56, 'fno_modes': (16, 8)},
@@ -268,6 +268,7 @@ MODELS = {
     'unet': {'arch': 'unet', 'dec_width': 96},
     'deeponet': {'arch': 'deeponet', 'dec_width': 96, 'n_sensors': 392,
                  'branch_batch_norm': True, 'trunk_batch_norm': True},
+    'deepokan': {'arch': 'deepokan', 'dec_width': 96},
 
     # Neural Operators + Diffusion Models (Generative Operators) - Stage 1: prior-only training
     'fno_dm': {'arch': 'genop-fno-diffusion', 'dec_width': 56, 'fno_modes': (16, 8), 'diff_steps': 20, 'training_stage': 1,
@@ -279,6 +280,8 @@ MODELS = {
     'deeponet_dm': {'arch': 'genop-deeponet-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1, 'n_sensors': 392,
                     'load_pretrained_prior': True, 'prior_checkpoint_key': 'deeponet_tra',
                     'branch_batch_norm': True, 'trunk_batch_norm': True},
+    'deepokan_dm': {'arch': 'genop-deepokan-diffusion', 'dec_width': 96, 'diff_steps': 20, 'training_stage': 1,
+                    'load_pretrained_prior': True, 'prior_checkpoint_key': 'deepokan_tra'},
 
     # Legacy Deterministic
     'resnet': {'arch': 'resnet', 'dec_width': 144},
@@ -494,7 +497,6 @@ def train_model(model_name, config):
         loss_scheduler = FlexibleLossScheduler(p_s) if p_s.enabled else None
 
         # Create Trainer with checkpoint support and loss scheduler
-        # Note: torch.compile disabled for Colab (compilation takes 10+ min for complex models)
         # Note: AMP disabled for Colab (doesn't support complex operations in FNO/TNO)
         trainer = Trainer(
             model, train_loader, optimizer, lr_scheduler, criterion,
@@ -504,7 +506,6 @@ def train_model(model_name, config):
             min_epoch_for_scheduler=10,  # Start LR scheduling earlier on Colab
             tno_teacher_forcing_ratio=config.get('tno_teacher_forcing_ratio', 0.0),  # TNO teacher forcing ratio
             loss_scheduler=loss_scheduler,  # Enable adaptive loss composition
-            enable_compile=False,  # Disable torch.compile for faster startup on Colab
             enable_amp=False  # Disable AMP (doesn't support complex FFT operations)
         )
 

@@ -29,7 +29,7 @@ class Trainer(object):
     def __init__(self, model:PredictionModel, trainLoader:DataLoader, optimizer:Optimizer, lrScheduler:_LRScheduler,
             criterion:PredictionLoss, trainHistory:LossHistory, writer:SummaryWriter, p_d:DataParams, p_t:TrainingParams,
             checkpoint_path:str=None, checkpoint_frequency:int=None, min_epoch_for_scheduler:int=50, tno_teacher_forcing_ratio:float=0.0,
-            loss_scheduler:FlexibleLossScheduler=None, enable_compile:bool=True, enable_amp:bool=None):
+            loss_scheduler:FlexibleLossScheduler=None, enable_amp:bool=None):
         self.model = model
         self.trainLoader = trainLoader
         self.optimizer = optimizer
@@ -60,20 +60,6 @@ class Trainer(object):
             print(f"[Trainer] Mixed precision (AMP) enabled")
         elif torch.cuda.is_available() and not enable_amp:
             print(f"[Trainer] Mixed precision (AMP) disabled (complex operations not supported)")
-
-        # JIT compile model for performance (PyTorch 2.0+ on GPU only)
-        # Note: Compilation can be slow (10+ min) for complex models on first run
-        if enable_compile and hasattr(torch, 'compile') and torch.cuda.is_available():
-            try:
-                self.model = torch.compile(
-                    self.model,
-                    mode="default",          # Balanced, safe mode
-                    fullgraph=False,         # Allow graph breaks for compatibility
-                    dynamic=True             # Handle dynamic shapes
-                )
-                print(f"[Trainer] Model compiled with torch.compile")
-            except Exception as e:
-                logging.warning(f"Could not compile model: {e}. Training will proceed without compilation.")
 
         # TNO teacher forcing configuration - calculate epochs from ratio
         if tno_teacher_forcing_ratio > 0:

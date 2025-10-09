@@ -382,14 +382,6 @@ class PerformanceOptimizer:
         """
         model = model.to(self.device)
 
-        # Apply torch optimizations
-        if hasattr(torch, 'compile') and self.optimization_level == "aggressive":
-            try:
-                model = torch.compile(model)
-                logging.info("Applied torch.compile optimization")
-            except Exception as e:
-                logging.warning(f"Could not apply torch.compile: {e}")
-
         # Enable mixed precision if supported
         if self.device.type == "cuda" and self.optimization_level in ["balanced", "aggressive"]:
             # Model is already set up for mixed precision in MixedPrecisionManager

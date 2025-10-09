@@ -17,9 +17,6 @@ from src.core.models.model_latent_transformer import (
 from src.core.models.model_refiner import PDERefiner
 from src.core.models.model_resnet import DilatedResNet
 from src.core.models.model_tno import TNOModel
-from src.core.models.deeponet.deeponet_variants import StandardDeepONet
-from src.core.models.deeponet.deeponet_base import DeepONetConfig
-from src.core.models.deeponet_format_adapter import DeepONetWrapper
 from src.core.utils.params import (DataParams, LossParams, ModelParamsDecoder,
                              ModelParamsEncoder, ModelParamsLatent,
                              TrainingParams)

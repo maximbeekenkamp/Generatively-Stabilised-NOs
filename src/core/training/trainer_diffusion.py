@@ -38,14 +38,6 @@ class TrainerDiffusion(object):
         if self.use_amp:
             print(f"[TrainerDiffusion] Mixed precision (AMP) enabled")
 
-        # JIT compile model for performance (GPU only)
-        if hasattr(torch, 'compile') and torch.cuda.is_available():
-            try:
-                self.model = torch.compile(self.model, mode="default")
-                print(f"[TrainerDiffusion] Model compiled with torch.compile")
-            except Exception as e:
-                logging.warning(f"Could not compile model: {e}")
-
 
     # run one epoch of training
     def trainingStep(self, epoch:int):

@@ -16,9 +16,6 @@ from neuralop.models import FNO
 from .base_classes import NeuralOperatorPrior, DataFormatHandler
 from .model_tno import TNOModel
 from .model_diffusion_blocks import Unet
-from .deeponet.deeponet_variants import StandardDeepONet
-from .deeponet.deeponet_base import DeepONetConfig
-from .deeponet_format_adapter import DeepONetWrapper
 from src.core.utils.params import ModelParamsDecoder, DataParams
 from src.core.utils.model_utils import get_prev_steps_from_arch, calculate_input_channels, calculate_output_channels
 
@@ -440,129 +437,241 @@ class UNetPriorAdapter(NeuralOperatorPrior):
 
 class DeepONetPriorAdapter(NeuralOperatorPrior):
     """
-    Adapter for DeepONet models to serve as priors.
+    DeepONet Prior Adapter for Gen Stabilised Framework.
 
-    This adapter wraps DeepONet's branch-trunk architecture, making it
-    compatible with the generative operator interface while handling
-    the format conversion between Gen Stabilised [B,T,C,H,W] and
-    DeepONet's branch-trunk input requirements.
+    This adapter integrates DeepONet (Deep Operator Network) as a neural operator
+    prior in the generative operator framework. DeepONet uses a branch-trunk
+    architecture for operator learning.
+
+    Key architectural features:
+    - Branch network: Processes discretized input fields
+    - Trunk network: Processes query coordinates (batched)
+    - Per-channel processing: Each field processed independently
+    - Autoregressive rollout: Processes one timestep at a time
+
+    Difference from TNO:
+    - No temporal branch (t-branch) - processes single timesteps
+    - Standard MLP networks instead of U-Nets
+    - Element-wise multiplication for branch-trunk combination
+
+    Args:
+        p_md: Model decoder parameters
+        p_d: Data parameters
+        **kwargs: Additional configuration overrides
     """
 
     def __init__(self, p_md: ModelParamsDecoder, p_d: DataParams, **kwargs):
         super().__init__()
 
+        from .deeponet.mlp_networks import MLP, DeepONet
+        from .deeponet.deeponet_config import DeepONetConfig
+        from .deeponet.deeponet_adapter import DeepONetFormatAdapter
+
         self.p_md = p_md
         self.p_d = p_d
         self.data_handler = DataFormatHandler()
 
-        # Create DeepONet configuration from existing parameters
+        # Create configuration
         config = DeepONetConfig.from_params(p_md, p_d)
-
-        # Override with any additional kwargs
         for key, value in kwargs.items():
             if hasattr(config, key):
                 setattr(config, key, value)
 
-        # Determine input/output channels
-        prevSteps = get_prev_steps_from_arch(p_md)
-        self.prev_steps = prevSteps
-
         # Spatial dimensions
         self.H, self.W = p_d.dataSize[-2], p_d.dataSize[-1]
 
-        # Create base DeepONet model
-        # Use StandardDeepONet as default (can be extended to support other variants)
-        base_deeponet = StandardDeepONet(config, p_md, p_d)
+        # Create branch and trunk MLPs
+        branch_config = config.get_branch_config()
+        trunk_config = config.get_trunk_config()
 
-        # Wrap with format adapter for Gen Stabilised compatibility
-        self.deeponet_wrapper = DeepONetWrapper(
+        branch_mlp = MLP(*branch_config)
+        trunk_mlp = MLP(*trunk_config)
+
+        # Create DeepONet
+        base_deeponet = DeepONet(
+            latent_features=config.latent_features,
+            out_features=1,  # Single output per query point
+            branch=branch_mlp,
+            trunk=trunk_mlp
+        )
+
+        # Wrap with format adapter
+        self.deeponet_wrapper = DeepONetFormatAdapter(
             deeponet_model=base_deeponet,
             spatial_dims=(self.H, self.W),
-            coordinate_dim=2  # 2D spatial coordinates
+            num_channels=config.num_channels
         )
+
+        self.prev_steps = get_prev_steps_from_arch(p_md)
+
+        print(f"[DeepONet] Initialized: spatial={self.H}×{self.W}, "
+              f"channels={config.num_channels}, latent={config.latent_features}, "
+              f"prev_steps={self.prev_steps}")
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass through DeepONet with Gen Stabilised format preservation.
+        Autoregressive rollout through DeepONet.
+
+        Processes sequence autoregressively, one timestep at a time. Unlike TNO
+        which uses temporal bundling, DeepONet processes each frame independently.
 
         Args:
             x: Input tensor [B, T, C, H, W]
 
         Returns:
-            prediction: DeepONet prediction [B, T, C, H, W]
+            prediction: Predicted sequence [B, T, C, H, W]
         """
-        # Validate input format
         if not self.data_handler.validate_gen_stabilised_format(x):
-            raise ValueError(f"Expected [B,T,C,H,W] format, got shape {x.shape}")
+            raise ValueError(f"Expected [B,T,C,H,W], got {x.shape}")
 
-        sizeBatch, sizeSeq = x.shape[0], x.shape[1]
+        B, T, C, H, W = x.shape
 
-        # Initialize prediction with input frames based on prev_steps
-        prediction = []
-        for i in range(self.prev_steps):
-            if i < sizeSeq:
-                prediction.append(x[:, i])
-            else:
-                # Pad with last available frame if needed
-                prediction.append(x[:, -1])
+        # Initialize with first frames
+        prediction = [x[:, i] for i in range(min(self.prev_steps, T))]
 
-        # Process remaining timesteps autoregressively
-        for i in range(self.prev_steps, sizeSeq):
-            # Extract history for prediction
-            start_idx = max(0, i - self.prev_steps + 1)
-            history = torch.stack([prediction[j] if j < len(prediction) else x[:, j]
-                                  for j in range(start_idx, i + 1)], dim=1)
+        # Autoregressive rollout
+        for i in range(self.prev_steps, T):
+            # Use most recent prediction as input
+            current_input = prediction[-1]  # [B, C, H, W]
 
-            # DeepONet forward pass (wrapper handles format conversion)
-            # Shape: [B, T_history, C, H, W] -> [B, T_history, C, H, W]
-            deeponet_output = self.deeponet_wrapper(history)
+            # DeepONet forward (adapter handles per-channel processing)
+            pred = self.deeponet_wrapper(current_input)
 
-            # Extract prediction for current timestep (last output)
-            current_pred = deeponet_output[:, -1]  # [B, C, H, W]
-            prediction.append(current_pred)
+            # Preserve simulation parameters
+            if self.p_d.simParams and len(self.p_d.simParams) > 0:
+                param_channels = len(self.p_d.simParams)
+                pred[:, -param_channels:] = x[:, i, -param_channels:]
 
-        # Stack all predictions
-        prediction = torch.stack(prediction, dim=1)
+            prediction.append(pred)
 
-        return prediction
+        return torch.stack(prediction, dim=1)
 
     def get_prior_features(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Extract DeepONet features for conditioning.
-
-        Args:
-            x: Input tensor [B, T, C, H, W]
-
-        Returns:
-            features: Dictionary of DeepONet features
-        """
-        # Get format info from wrapper
-        format_info = self.deeponet_wrapper.get_format_info()
-
+        """Extract DeepONet configuration features."""
         return {
             'deeponet_config': {
-                'spatial_dims': format_info['spatial_dims'],
-                'coordinate_dim': format_info['coordinate_dim'],
-                'spatial_points': format_info['spatial_points'],
-                'prev_steps': self.prev_steps
+                'spatial_dims': (self.H, self.W),
+                'prev_steps': self.prev_steps,
+                'has_t_branch': False,  # Key difference from TNO
+                'processing_mode': 'per_channel'
             }
         }
 
     def validate_input_shape(self, x: torch.Tensor) -> bool:
-        """
-        Validate input shape compatibility with DeepONet.
-
-        Args:
-            x: Input tensor to validate
-
-        Returns:
-            valid: True if compatible
-        """
+        """Validate input shape compatibility."""
         if not self.data_handler.validate_gen_stabilised_format(x):
             return False
-
-        # Check spatial dimensions
-        expected_h, expected_w = self.p_d.dataSize[-2], self.p_d.dataSize[-1]
         _, _, _, h, w = x.shape
+        return h == self.H and w == self.W
 
-        return h == expected_h and w == expected_w
+
+class DeepOKANPriorAdapter(NeuralOperatorPrior):
+    """
+    DeepOKAN Prior Adapter - DeepONet with KAN layers.
+
+    This adapter integrates DeepOKAN (DeepONet with Kolmogorov-Arnold Networks)
+    as a neural operator prior. DeepOKAN replaces standard MLPs with RBF-KAN
+    networks, providing improved expressiveness for operator learning.
+
+    Key architectural differences from DeepONet:
+    - RBF-KAN networks instead of MLPs
+    - Shared trunk: [H*W, 2] not [B, H*W, 2]
+    - Einsum combination: 'bik,nk->bni'
+    - Higher precision: float64 for KAN stability
+
+    Args:
+        p_md: Model decoder parameters
+        p_d: Data parameters
+        **kwargs: Additional configuration overrides
+    """
+
+    def __init__(self, p_md: ModelParamsDecoder, p_d: DataParams, **kwargs):
+        super().__init__()
+
+        from .deepokan.deepokan_base import DeepOKAN
+        from .deepokan.deepokan_config import DeepOKANConfig
+        from .deepokan.deepokan_adapter import DeepOKANFormatAdapter
+
+        self.p_md = p_md
+        self.p_d = p_d
+        self.data_handler = DataFormatHandler()
+
+        # Create configuration
+        config = DeepOKANConfig.from_params(p_md, p_d)
+        for key, value in kwargs.items():
+            if hasattr(config, key):
+                setattr(config, key, value)
+
+        # Spatial dimensions
+        self.H, self.W = p_d.dataSize[-2], p_d.dataSize[-1]
+
+        # Create DeepOKAN
+        base_deepokan = DeepOKAN(config)
+
+        # Wrap with format adapter
+        self.deepokan_wrapper = DeepOKANFormatAdapter(
+            deepokan_model=base_deepokan,
+            spatial_dims=(self.H, self.W),
+            num_channels=len(p_d.simFields) if p_d.simFields else 2
+        )
+
+        self.prev_steps = get_prev_steps_from_arch(p_md)
+
+        print(f"[DeepOKAN] Initialized: spatial={self.H}×{self.W}, "
+              f"HD={config.HD}, grid_count={config.grid_count}, "
+              f"prev_steps={self.prev_steps}")
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Autoregressive rollout through DeepOKAN.
+
+        Same autoregressive pattern as DeepONet, but using KAN networks
+        and shared trunk architecture.
+
+        Args:
+            x: Input tensor [B, T, C, H, W]
+
+        Returns:
+            prediction: Predicted sequence [B, T, C, H, W]
+        """
+        if not self.data_handler.validate_gen_stabilised_format(x):
+            raise ValueError(f"Expected [B,T,C,H,W], got {x.shape}")
+
+        B, T, C, H, W = x.shape
+
+        # Initialize with first frames
+        prediction = [x[:, i] for i in range(min(self.prev_steps, T))]
+
+        # Autoregressive rollout
+        for i in range(self.prev_steps, T):
+            current_input = prediction[-1]  # [B, C, H, W]
+
+            # DeepOKAN forward (adapter handles shared trunk and per-channel processing)
+            pred = self.deepokan_wrapper(current_input)
+
+            # Preserve simulation parameters
+            if self.p_d.simParams and len(self.p_d.simParams) > 0:
+                param_channels = len(self.p_d.simParams)
+                pred[:, -param_channels:] = x[:, i, -param_channels:]
+
+            prediction.append(pred)
+
+        return torch.stack(prediction, dim=1)
+
+    def get_prior_features(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Extract DeepOKAN configuration features."""
+        return {
+            'deepokan_config': {
+                'spatial_dims': (self.H, self.W),
+                'prev_steps': self.prev_steps,
+                'uses_kan': True,
+                'trunk_mode': 'shared'  # Key difference: trunk is shared, not batched
+            }
+        }
+
+    def validate_input_shape(self, x: torch.Tensor) -> bool:
+        """Validate input shape compatibility."""
+        if not self.data_handler.validate_gen_stabilised_format(x):
+            return False
+        _, _, _, h, w = x.shape
+        return h == self.H and w == self.W

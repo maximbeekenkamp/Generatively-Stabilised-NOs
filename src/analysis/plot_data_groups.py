@@ -3,12 +3,13 @@ Plot Data Groups - Grouped Model Comparison Plotting
 
 This script wraps plot_data.py to support multiple model comparison groups:
 - legacy: All original autoreg models (ResNet, Refiner, ACDM, etc.)
-- neural_operators: All standalone Neural Operators (FNO, TNO, UNet, DeepONet)
-- no_dm: All NO+DM models (FNO+DM, TNO+DM, UNet+DM, DeepONet+DM)
+- neural_operators: All standalone Neural Operators (FNO, TNO, UNet, DeepONet, DeepOKAN)
+- no_dm: All NO+DM models (FNO+DM, TNO+DM, UNet+DM, DeepONet+DM, DeepOKAN+DM)
 - fno_comparison: FNO vs FNO+DM
 - tno_comparison: TNO vs TNO+DM
 - unet_comparison: UNet vs UNet+DM
 - deeponet_comparison: DeepONet vs DeepONet+DM
+- deepokan_comparison: DeepOKAN vs DeepOKAN+DM
 
 Usage:
     python plot_data_groups.py --groups legacy neural_operators
@@ -45,6 +46,7 @@ MODEL_GROUPS = {
             "TNO": "tno_tra.npz",
             "U-Net": "unet_tra.npz",
             "DeepONet": "deeponet_tra.npz",
+            "DeepOKAN": "deepokan_tra.npz",
         },
         "description": "Neural Operators Comparison"
     },
@@ -56,6 +58,7 @@ MODEL_GROUPS = {
             "TNO+DM": "tno_dm_tra.npz",
             "UNet+DM": "unet_dm_tra.npz",
             "DeepONet+DM": "deeponet_dm_tra.npz",
+            "DeepOKAN+DM": "deepokan_dm_tra.npz",
         },
         "description": "NO+DM Models Comparison"
     },
@@ -94,6 +97,15 @@ MODEL_GROUPS = {
             "DeepONet+DM": "deeponet_dm_tra.npz",
         },
         "description": "DeepONet vs DeepONet+DM"
+    },
+
+    "deepokan_comparison": {
+        "models": {
+            "Simulation": "groundTruth.dict",
+            "DeepOKAN": "deepokan_tra.npz",
+            "DeepOKAN+DM": "deepokan_dm_tra.npz",
+        },
+        "description": "DeepOKAN vs DeepOKAN+DM"
     },
 }
 
