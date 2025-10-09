@@ -29,7 +29,7 @@ class Trainer(object):
     def __init__(self, model:PredictionModel, trainLoader:DataLoader, optimizer:Optimizer, lrScheduler:_LRScheduler,
             criterion:PredictionLoss, trainHistory:LossHistory, writer:SummaryWriter, p_d:DataParams, p_t:TrainingParams,
             checkpoint_path:str=None, checkpoint_frequency:int=None, min_epoch_for_scheduler:int=50, tno_teacher_forcing_ratio:float=0.0,
-            loss_scheduler:FlexibleLossScheduler=None, enable_compile:bool=True):
+            loss_scheduler:FlexibleLossScheduler=None, enable_compile:bool=True, enable_amp:bool=None):
         self.model = model
         self.trainLoader = trainLoader
         self.optimizer = optimizer
@@ -50,10 +50,16 @@ class Trainer(object):
             logging.info(f"Flexible loss scheduler enabled: {loss_scheduler.config.source_loss} → {loss_scheduler.config.target_loss}")
 
         # Mixed precision training - available to all subclasses
-        self.use_amp = torch.cuda.is_available()
+        # Note: AMP doesn't support complex operations (used in FNO/TNO FFTs)
+        if enable_amp is None:
+            # Auto-detect: disable AMP for models with complex operations
+            enable_amp = torch.cuda.is_available()
+        self.use_amp = enable_amp and torch.cuda.is_available()
         self.scaler = GradScaler() if self.use_amp else None
         if self.use_amp:
             print(f"[Trainer] Mixed precision (AMP) enabled")
+        elif torch.cuda.is_available() and not enable_amp:
+            print(f"[Trainer] Mixed precision (AMP) disabled (complex operations not supported)")
 
         # JIT compile model for performance (PyTorch 2.0+ on GPU only)
         # Note: Compilation can be slow (10+ min) for complex models on first run

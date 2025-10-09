@@ -495,6 +495,7 @@ def train_model(model_name, config):
 
         # Create Trainer with checkpoint support and loss scheduler
         # Note: torch.compile disabled for Colab (compilation takes 10+ min for complex models)
+        # Note: AMP disabled for Colab (doesn't support complex operations in FNO/TNO)
         trainer = Trainer(
             model, train_loader, optimizer, lr_scheduler, criterion,
             train_history, writer, p_d, p_t,
@@ -503,7 +504,8 @@ def train_model(model_name, config):
             min_epoch_for_scheduler=10,  # Start LR scheduling earlier on Colab
             tno_teacher_forcing_ratio=config.get('tno_teacher_forcing_ratio', 0.0),  # TNO teacher forcing ratio
             loss_scheduler=loss_scheduler,  # Enable adaptive loss composition
-            enable_compile=False  # Disable torch.compile for faster startup on Colab
+            enable_compile=False,  # Disable torch.compile for faster startup on Colab
+            enable_amp=False  # Disable AMP (doesn't support complex FFT operations)
         )
 
         print(f"     Training {p_t.epochs} epochs on {len(dataset)} samples using Trainer class...")
