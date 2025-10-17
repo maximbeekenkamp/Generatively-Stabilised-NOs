@@ -109,7 +109,8 @@ class PredictionLoss(nn.modules.loss._Loss):
             # Diffusion loss: MSE between actual noise and predicted noise
             loss = F.mse_loss(predictedNoise, noise)
 
-            # Return complete lossParts dict matching new component format
+            # Return complete lossParts dict matching loss_history expectations
+            # CRITICAL: Must include ALL keys that loss_history.batchLoss expects!
             zero_loss = torch.zeros(1).to(device)
             lossParts = {
                 'lossFull': loss,
@@ -118,6 +119,11 @@ class PredictionLoss(nn.modules.loss._Loss):
                 'lossRecLSIM': zero_loss,
                 'lossPredLSIM': zero_loss,
                 'lossSpectrumError': zero_loss,
+                # Regularization terms (required by loss_history.batchLoss dict)
+                'lossRegMeanStd': zero_loss,
+                'lossRegDiv': zero_loss,
+                'lossRegVaeKLDiv': zero_loss,
+                'lossRegLatStep': zero_loss,
             }
             lossSeq = {'fieldError': zero_loss, 'LSIM': zero_loss, 'spectrumError': zero_loss}
             return loss, lossParts, lossSeq
